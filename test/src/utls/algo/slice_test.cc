@@ -7,7 +7,8 @@
 #include "soro/utls/algo/slice.h"
 #include "soro/utls/std_wrapper/copy.h"
 
-using namespace soro;
+namespace soro {
+
 
 TEST_SUITE("slice suite") {
   TEST_CASE("slice simple") {
@@ -160,4 +161,6 @@ TEST_SUITE("slice suite") {
     soro::vector<int> const expected = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
     CHECK_EQ(slice, expected);
   }
+}
+
 }

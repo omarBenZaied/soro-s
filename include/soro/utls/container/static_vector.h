@@ -49,13 +49,13 @@ struct static_vector {
   constexpr T& operator[](size_type const idx) { return mem_[idx]; }
   constexpr T const& operator[](size_type const idx) const { return mem_[idx]; }
 
-  constexpr iterator begin() { return std::begin(mem_); }
+  constexpr iterator begin() { return &(*std::begin(mem_)); }
   constexpr iterator end() { return begin() + end_; }
 
-  constexpr const_iterator begin() const { return std::cbegin(mem_); }
+  constexpr const_iterator begin() const { return &(*std::cbegin(mem_)); }
   constexpr const_iterator end() const { return begin() + end_; }
 
-  constexpr const_iterator cbegin() const { return std::cbegin(mem_); }
+  constexpr const_iterator cbegin() const { return &(*std::cbegin(mem_)); }
   constexpr const_iterator cend() const { return cbegin() + end_; }
 
   constexpr bool operator==(static_vector const& other) const {

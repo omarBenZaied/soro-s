@@ -22,14 +22,14 @@ static_assert([] {
   return 0 != any{a};
 }());
 
-static_assert([] -> bool {
+static_assert([]() -> bool {
   constexpr std::array<int, 5> a{0, 1, 2, 3, 4};
   auto result = 1 == any{a};
   static_assert(a[4] == 4);
   return result;
 }());
 
-static_assert([] -> bool {
+static_assert([]() -> bool {
   constexpr std::array<int, 5> a{0, 1, 2, 3, 4};
   auto result = 5 != any{a};
   static_assert(a[4] == 4);

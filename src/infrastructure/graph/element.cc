@@ -364,9 +364,12 @@ std::span<element::ptr const> neighbours(Element const& e,
   using enum mileage_dir;
 
   // make sure the falling/rising pairs are located next ot each other
-  static_assert(
+  utls::sassert(detail::get_neighbour_idx(falling, cross::direction::start_left) + 1 ==
+                    detail::get_neighbour_idx(rising, cross::direction::start_left),"falling/rising pairs are not next to each other."
+                " This utls::sassert was used as replacement of a non-functioning static_assert.");
+  /*static_assert(
       detail::get_neighbour_idx(falling, cross::direction::start_left) + 1 ==
-      detail::get_neighbour_idx(rising, cross::direction::start_left));
+      detail::get_neighbour_idx(rising, cross::direction::start_left));*/
 
   auto const neighbour_idx = get_neighbour_idx(falling, dir);
 

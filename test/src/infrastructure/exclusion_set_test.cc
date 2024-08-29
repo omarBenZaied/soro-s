@@ -7,7 +7,7 @@
 #include "soro/infrastructure/exclusion/exclusion_set.h"
 #include "soro/infrastructure/interlocking/interlocking_route.h"
 
-using namespace soro;
+//using namespace soro;
 using namespace soro::infra;
 
 void check_set(exclusion_set const& set) { CHECK(set.ok()); }
@@ -28,8 +28,8 @@ TEST_SUITE("exclusion set") {
     CHECK_EQ(es.first_, 0U);
     CHECK_EQ(es.last_, exclusion_set::bitvec_t::bits_per_block - 1);
 
-    CHECK_EQ(es.first_bit_set_, as_val(ids.front()));
-    CHECK_EQ(es.last_bit_set_, as_val(ids.back()));
+    CHECK_EQ(es.first_bit_set_, soro::as_val(ids.front()));
+    CHECK_EQ(es.last_bit_set_, soro::as_val(ids.back()));
     CHECK(!es.empty());
 
     es.clear();

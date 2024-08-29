@@ -276,7 +276,7 @@ station_route::idx lookup_by_name(std::string_view const name, type const type,
   station_route::idx result = station_route::invalid_idx();
 
   for (auto const [idx, node] :
-       utl::enumerate<station_route::idx>(station_route->nodes())) {
+       utl::enumerate/*<station_route::idx>*/(station_route->nodes())) {
     if (!node->is(type)) continue;
 
     auto const e = node->element_;

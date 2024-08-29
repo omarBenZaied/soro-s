@@ -251,8 +251,9 @@ critical_sections get_critical_sections(graph const& graph) {
   // loop over the sections and every time we find a section that starts
   // a critical section, we create a new critical section and assign all
   // the sections
-  for (auto const [section_id, section] :
-       utl::enumerate<section::id>(graph.sections_)) {
+  for (auto const [section_id_long, section] :
+       utl::enumerate/*<section::id>*/(graph.sections_)) {
+    auto section_id = section::id(section_id_long);
     // already assigned to a critical section
     if (ss.section_to_critical_section_[section_id] !=
         critical_section::invalid()) {
@@ -286,4 +287,4 @@ critical_sections get_critical_sections(graph const& graph) {
   return ss;
 }
 
-};  // namespace soro::infra
+}  // namespace soro::infra

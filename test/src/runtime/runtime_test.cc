@@ -434,5 +434,7 @@ TEST_SUITE("runtime suite") {
     check_delays(infra, tt);
   }
 }
-
+TEST_CASE("Omar Runtime"){
+  std::cout<<"Hallo"<<std::endl;
+}
 }  // namespace soro::runtime::test

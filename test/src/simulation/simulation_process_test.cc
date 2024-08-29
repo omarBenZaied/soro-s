@@ -86,7 +86,7 @@ TEST_SUITE("simulation process") {
 TEST_SUITE("simulation process 2h") {
   using namespace date;
 
-  constexpr interval const inter{
+  interval const inter{
       .start_ = ymd_to_abs(2021_y / November / 13) + hours{7},
       .end_ = ymd_to_abs(2021_y / November / 13) + hours{9}};
 

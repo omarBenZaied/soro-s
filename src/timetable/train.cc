@@ -103,7 +103,7 @@ bool train::uses_freight() const {
   return this->stop_mode() == rs::stop_mode::freight;
 }
 
-bool train::has_lzb() const { return physics_.has_lzb(); };
+bool train::has_lzb() const { return physics_.has_lzb(); }
 
 rs::LZB train::lzb() const { return physics_.lzb(); }
 
@@ -163,7 +163,7 @@ soro::vector<train::trip> train::trips(trip::id const start_id) const {
   result.reserve(trip_count());
 
   for (auto const [offset, anchor] :
-       utl::enumerate<train::trip::id::value_t>(departures())) {
+       utl::enumerate/*<train::trip::id::value_t>*/(departures())) {
     result.emplace_back(start_id + offset, id_, anchor);
   }
 

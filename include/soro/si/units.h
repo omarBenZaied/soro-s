@@ -71,7 +71,7 @@ constexpr accel from_m_s2(precision const acc_in_ms2) {
   return accel{acc_in_ms2};
 }
 
-constexpr slope from_per_mille_gradient(precision const slope_in_per_mille) {
+inline slope from_per_mille_gradient(precision const slope_in_per_mille) {
   return si::slope{std::atan(slope_in_per_mille / 1000.0)};
 }
 

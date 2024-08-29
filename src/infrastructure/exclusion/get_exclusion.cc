@@ -26,9 +26,9 @@ get_irs_to_exclusion_sets(
       irs_to_exclusion_sets(interlocking_route_count);
 
   for (auto const [id, exclusion_set] :
-       utl::enumerate<exclusion_set::id>(exclusion_sets)) {
+       utl::enumerate/*<exclusion_set::id>*/(exclusion_sets)) {
     for (auto const ir_id : exclusion_set) {
-      irs_to_exclusion_sets[ir_id].emplace_back(id);
+      irs_to_exclusion_sets[ir_id].emplace_back(utls::narrow<uint32_t>(id));
     }
   }
 

@@ -54,11 +54,11 @@ struct intermediate_station_route {
 };
 
 struct id_mapping {
-  element::id operator[](rail_plan_node_id const id,
+  /*element::id operator[](rail_plan_node_id const id,
                          mileage_dir const dir) const {
     utls::expect(id < mapping_.size());
     return mapping_[id][std::to_underlying(dir)];
-  }
+  }*/
 
   std::array<element::id, 2> operator[](rail_plan_node_id const id) const {
     utls::expect(id < mapping_.size());

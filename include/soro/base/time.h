@@ -53,7 +53,7 @@ using duration = i32_seconds;
   return sc::floor<days>(t);
 }
 
-[[nodiscard]] constexpr absolute_time ymd_to_abs(
+[[nodiscard]] inline absolute_time ymd_to_abs(
     date::year_month_day const ymd) {
   return sc::time_point_cast<absolute_time::duration>(date::sys_days{ymd});
 }

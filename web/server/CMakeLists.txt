@@ -47,28 +47,29 @@ endforeach()
 set_target_properties(tiles PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:tiles,INTERFACE_INCLUDE_DIRECTORIES>)
 set_target_properties(guess PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:guess,INTERFACE_INCLUDE_DIRECTORIES>)
 
-target_link_libraries(soro-server-lib PUBLIC
-  guess
-  pugixml
-  rapidjson
-  utl
-  tiles
-  tiles-import-library
-  boost
-  web-server
-  soro-lib
-  cereal
-  range-v3
-  ${SORO_LINK_STATIC}
+target_link_libraries(soro-server-lib PRIVATE
+        date
+        guess
+        pugixml
+        rapidjson
+        utl
+        tiles
+        tiles-import-library
+        boost
+        web-server
+        soro-lib
+        cereal
+        range-v3
+        ${SORO_LINK_STATIC}
 )
 
 add_executable(soro-server src/main.cc)
 set_target_properties(soro-server PROPERTIES
-  RUNTIME_OUTPUT_DIRECTORY ${SORO_SERVER_DIR})
+        RUNTIME_OUTPUT_DIRECTORY ${SORO_SERVER_DIR})
 
 target_compile_options(soro-server PRIVATE ${SORO_COMPILE_OPTIONS})
 target_compile_features(soro-server PRIVATE ${SORO_COMPILE_FEATURES})
 target_compile_definitions(soro-server PRIVATE ${SORO_COMPILE_DEFINITIONS})
 
-target_link_libraries(soro-server PUBLIC soro-server-lib)
+target_link_libraries(soro-server PRIVATE soro-server-lib)
 

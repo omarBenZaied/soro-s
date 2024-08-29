@@ -9,7 +9,7 @@ namespace soro::runtime::rk4::detail {
 
 template <std::size_t Degree, typename To, typename ToPrime>
 struct newton_interpolator {
-  newton_interpolator(sampling_points<Degree> const& sps) {
+  explicit newton_interpolator(sampling_points<Degree> const& sps) {
     coefficients_ = sps.template get<To>();
     sampling_points_ = sps.template get<si::length>();
 

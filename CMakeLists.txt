@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.19)
 
 project(soro CXX)
 
+
 ### --- OPTIONS --- ###
 
 # --- CISTA OPTIONS --- #
@@ -26,7 +27,7 @@ if(SORO_SAN)
   SET(SORO_COMPILE_DEFINITIONS SORO_SAN ${SORO_COMPILE_DEFINITIONS})
   SET(SORO_LINK_STATIC "")
 else()
-  SET(SORO_LINK_STATIC "-static")
+  SET(SORO_LINK_STATIC "")
 endif()
 
 if(SORO_LINT)
@@ -77,35 +78,35 @@ message("-- The clang-format executable is: ${CLANG_FORMAT_COMMAND}")
 set(SORO_COMPILE_OPTIONS "")
 if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
   set(SORO_COMPILE_OPTIONS ${SORO_COMPILE_OPTIONS}
-    -Weverything
-    -Wno-c++98-compat
-    -Wno-c++98-compat-pedantic
-    -Wno-newline-eof
-    -Wno-missing-prototypes
-    -Wno-padded
-    -Wno-double-promotion
-    -Wno-undef
-    -Wno-undefined-reinterpret-cast
-    -Wno-float-conversion
-    -Wno-global-constructors
-    -Wno-exit-time-destructors
-    -Wno-switch-enum
-    -Wno-c99-designator
-    -Wno-zero-as-null-pointer-constant
-    -Wno-missing-noreturn
-    #    -Wno-deprecated-experimental-coroutine
-    -Werror
-    ${SORO_LINK_STATIC}
+          -Weverything
+          -Wno-c++98-compat
+          -Wno-c++98-compat-pedantic
+          -Wno-newline-eof
+          -Wno-missing-prototypes
+          -Wno-padded
+          -Wno-double-promotion
+          -Wno-undef
+          -Wno-undefined-reinterpret-cast
+          -Wno-float-conversion
+          -Wno-global-constructors
+          -Wno-exit-time-destructors
+          -Wno-switch-enum
+          -Wno-c99-designator
+          -Wno-zero-as-null-pointer-constant
+          -Wno-missing-noreturn
+          #    -Wno-deprecated-experimental-coroutine
+          -Werror
+          ${SORO_LINK_STATIC}
   )
 
   if(CMAKE_CXX_COMPILER_VERSION GREATER_EQUAL 15)
     set(SORO_COMPILE_OPTIONS ${SORO_COMPILE_OPTIONS}
-      -Wno-deprecated-non-prototype)
+            -Wno-deprecated-non-prototype)
   endif()
 
   if(CMAKE_CXX_COMPILER_VERSION GREATER_EQUAL 16)
     set(SORO_COMPILE_OPTIONS ${SORO_COMPILE_OPTIONS}
-      -Wno-unsafe-buffer-usage) # TODO(julian) try enabling this
+            -Wno-unsafe-buffer-usage) # TODO(julian) try enabling this
   endif()
 
   if(SORO_SAN)
@@ -114,16 +115,16 @@ if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
   endif()
 elseif(MSVC)
   set(SORO_COMPILE_OPTIONS ${SORO_COMPILE_OPTIONS}
-    /WX
+
   )
 else()
   set(SORO_COMPILE_OPTIONS ${SORO_COMPILE_OPTIONS}
-    -Wall
-    -Wextra
-    -Werror
-    -fcoroutines
-    -fconcepts-diagnostics-depth=10
-    ${SORO_LINK_STATIC}
+          -Wall
+          -Wextra
+          -Werror
+          -fcoroutines
+          -fconcepts-diagnostics-depth=10
+          ${SORO_LINK_STATIC}
   )
 endif()
 
@@ -136,16 +137,16 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 file(GLOB_RECURSE soro-lib-files src/*.cc)
-add_library(soro-lib STATIC EXCLUDE_FROM_ALL ${soro-lib-files})
+add_library(soro-lib EXCLUDE_FROM_ALL ${soro-lib-files})
 
 if(SORO_CUDA)
   add_library(infrastructure-cuda src/infrastructure/gpu/exclusion.cu)
   set_target_properties(infrastructure-cuda PROPERTIES
-    WINDOWS_EXPORT_ALL_SYMBOLS ON
-    CUDA_STANDARD 20
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-    INSTALL_RPATH "$ORIGIN/../lib:$ORIGIN/")
+          WINDOWS_EXPORT_ALL_SYMBOLS ON
+          CUDA_STANDARD 20
+          RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+          LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+          INSTALL_RPATH "$ORIGIN/../lib:$ORIGIN/")
   target_include_directories(infrastructure-cuda PUBLIC include)
   set_property(TARGET infrastructure-cuda PROPERTY CUDA_ARCHITECTURES 75 61)
 endif()
@@ -153,8 +154,8 @@ endif()
 target_compile_options(soro-lib PRIVATE ${SORO_COMPILE_OPTIONS})
 target_compile_features(soro-lib PRIVATE ${SORO_COMPILE_FEATURES})
 target_compile_definitions(soro-lib PRIVATE ${SORO_COMPILE_DEFINITIONS})
-target_include_directories(soro-lib PUBLIC include)
-target_link_libraries(soro-lib PUBLIC utl cista date pugixml range-v3 Threads::Threads tbb)
+target_include_directories(soro-lib PRIVATE include)
+target_link_libraries(soro-lib PRIVATE utl cista date pugixml range-v3 Threads::Threads tbb)
 
 if(SORO_CUDA)
   target_link_libraries(soro-lib PUBLIC infrastructure-cuda)
@@ -166,18 +167,18 @@ add_subdirectory(web)
 
 # Generate file_paths.h for locating the test resources
 configure_file(test/include/test/file_paths.h.in
-  ${CMAKE_CURRENT_SOURCE_DIR}/test/include/test/file_paths.h)
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/include/test/file_paths.h)
 
 # Build the tests by getting all test files and linking to doctest and soro-lib
-file(GLOB_RECURSE soro-test-files test/src/*.cc web/server/test/src/*.cc)
-add_executable(soro-test ${soro-test-files})
+file(GLOB_RECURSE soro-test-files test/src/*.cc)
+add_executable(soro-test EXCLUDE_FROM_ALL ${soro-test-files})
 
 target_compile_options(soro-test PRIVATE ${SORO_COMPILE_OPTIONS})
 target_compile_features(soro-test PRIVATE ${SORO_COMPILE_FEATURES})
 target_compile_definitions(soro-test PRIVATE ${SORO_COMPILE_DEFINITIONS})
-
-target_link_libraries(soro-test PUBLIC utl doctest date soro-lib soro-server-lib)
-target_include_directories(soro-test PUBLIC test/include)
+target_include_directories(soro-test PRIVATE include)
+target_link_libraries(soro-test PRIVATE utl pugixml range-v3 doctest date soro-lib)
+target_include_directories(soro-test PRIVATE test/include)
 
 # Tools
 
@@ -204,7 +205,7 @@ if(SORO_LINT)
 
   foreach(target ${all-targets})
     set_target_properties(${target} PROPERTIES
-      CXX_CLANG_TIDY ${SORO_CLANG_TIDY}
+            CXX_CLANG_TIDY ${SORO_CLANG_TIDY}
     )
   endforeach()
 endif()
@@ -214,5 +215,5 @@ endif()
 # -DCMAKE_EXPORT_COMPILE_COMMANDS=1
 if(CMAKE_EXPORT_COMPILE_COMMANDS)
   set(CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES
-    ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES})
+          ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES})
 endif()

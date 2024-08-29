@@ -71,13 +71,14 @@ constexpr bool fits(In const in) {
 
 template <std::integral Out, std::integral In>
 [[nodiscard]] constexpr Out narrow(In const i) {
-  if !consteval {
+  /*if !consteval {
     utls::sassert(detail::fits<Out>(i), "failed narrowing conversion for {}",
                   i);
   } else {
     assert(detail::fits<Out>(i));
-  }
-
+  }*/
+  utls::sassert(detail::fits<Out>(i), "failed narrowing conversion for {}",
+                i);
   return static_cast<Out>(i);
 }
 
