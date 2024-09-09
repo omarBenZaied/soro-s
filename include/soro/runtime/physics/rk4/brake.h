@@ -13,4 +13,6 @@ train_state brake_over_distance(si::speed const initial_speed,
                                 si::accel const deaccel,
                                 si::length const distance);
 
+train_state brake_backwards(train_state state,si::accel deaccel, si::length stop_distance,si::speed max_speed);
+
 }  // namespace soro::runtime::rk4

@@ -27,6 +27,13 @@ struct train_state {
     return *this;
   }
 
+  train_state& operator-=(train_state const& other){
+    time_-=other.time_;
+    dist_-=other.dist_;
+    speed_-=other.speed_;
+    return *this;
+  }
+
   si::time time_{si::time::zero()};
   si::length dist_{si::length::zero()};
   si::speed speed_{si::speed::zero()};

@@ -160,4 +160,48 @@ train_state accelerate(si::speed const initial_speed, si::speed const max_speed,
   return result;
 }
 
+train_state find_halt_position(train_state const& second_to_last,si::accel accel){
+  auto time  = second_to_last.speed_/accel;
+  train_state result;
+  result.speed_ = si::speed::zero();
+  result.time_ = second_to_last.time_-time;
+  result.dist_ = second_to_last.dist_-0.5*accel*time.pow<2>();
+  return result;
+}
+
+train_state get_backwards_intersection_at_max_speed(si::speed const& speed,train_state const& second_to_last,si::time const& h,si::slope const& slope,train_physics const& tp){
+  auto step = rk4_step(second_to_last.speed_, h, slope, tp);
+  auto factor = (second_to_last.speed_-speed)/step.speed_;
+  step.dist_ = factor*step.dist_;
+  step.time_ = factor*step.time_;
+  train_state result;
+  result.speed_ = speed;
+  result.time_ = second_to_last.time_-step.time_;
+  result.dist_ = second_to_last.dist_-step.dist_;
+  return result;
+}
+train_state accelerate_backwards(train_state initial_state,interval const& interval,rs::train_physics const& tp){
+  utls::sassert(initial_state.dist_==interval.end_distance(),"state doesnt start at end of interval in backwards acceleration");
+  auto slope = interval.slope();
+  auto max_speed = interval.speed_limit(tp);
+  train_state last;
+  while(initial_state.dist_>interval.start_distance()&&initial_state.speed_<max_speed&&initial_state.speed_.is_positive()){
+    //TODO:: das hier ist generaliserbar
+    last = initial_state;
+    initial_state-=rk4_step(initial_state.speed_, delta_t, slope, tp);
+  }
+  if(initial_state.dist_<interval.start_distance()){
+    initial_state = detail::get_intersection_at_max_dist(interval.start_distance(), initial_state, last,
+                                                  slope, tp);
+  }
+  if(initial_state.speed_.is_negative()){
+    initial_state=find_halt_position(last,tp.acceleration(si::speed::zero(),interval.slope()));
+  }
+  // this can only happen if maximal tractive force still results in a negative acceleration
+  if(initial_state.speed_>max_speed){
+    initial_state = get_backwards_intersection_at_max_speed(max_speed,last,delta_t,slope,tp);
+  }
+  return initial_state;
+}
+
 }  // namespace soro::runtime::rk4
