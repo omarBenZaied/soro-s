@@ -2,6 +2,7 @@
 //#include "soro/runtime/common/train_path_envelope.h"
 //#include "soro/runtime/physics/rk4/detail/rk4_step.h"
 //#include "soro/runtime/physics/rk4/brake.h"
+#include "soro/rolling_stock/train_physics.h"
 #include "soro/runtime/physics/rk4/detail/delta_t.h"
 #pragma once
 /**
@@ -173,9 +174,38 @@
  * @param drive the ride
  * @return true iff the methode finds an alteration that increases the time enough
  */
-bool check_HDH(train_drive& drive){
-return true;
-}
+/*bool check_HDH(train_drive& drive,decltype(drive.phases_.begin()) phase_it,decltype(drive.phase_types_.begin()) types_it,soro::rs::train_physics const& tp,int offset){
+  auto initial = phase_it->front();
+  auto interval = get_interval(initial.dist_);
+  auto brake_end_speed = (phase_it+1)->back().speed_;
+  soro::vector<soro::runtime::train_state> brake = {initial};
+  while(initial.speed_!=brake_end_speed){
+    auto deccel = tp.braking_deaccel(interval.infra_limit(),interval.bwp_limit(),interval.brake_path_length());
+    initial = brake_over_distance_with_target(initial,deccel,brake_end_speed);
+    brake.push_back(initial);
+  }
+  auto end_of_new_cruise_state = phase_it+2>=drive.phases_.end()||*(types_it+2)!=cruising ? (phase_it+1)->back():(phase_it+2)->back();
+  auto current_pt_time = drive.phases_.back().back().time_;
+  if(initial.time_+(end_of_new_cruise_state.dist_-initial.dist_)/initial.speed_-end_of_new_cruise_state.time_<=pt.e_time_-current_pt_time){
+    auto to_erase = phase_it+2>=drive.phases_.end()||*(types_it+2)!=cruising ? 2:3;
+    soro::runtime::train_state end_cruise;
+    end_cruise.dist_ = end_of_new_cruise_state.dist_;
+    end_cruise.speed_ = initial.speed_;
+    end_cruise.time_ = initial.time_ +(end_of_new_cruise_state.dist_-initial.dist_)/initial.speed_;
+    soro::vector<soro::runtime::train_state> cruise_phase = {initial,end_cruise};
+    drive.phases_.erase(phase_it,phase_it+to_erase);
+    drive.phase_types_.erase(types_it,types_it+to_erase);
+    phase_it = drive.phases_.begin()+offset;
+    types_it = drive.phase_types_.begin()+offset;
+    drive.phase_types_.insert(types_it,braking);
+    drive.phase_types_.insert(drive.phase_types_.begin()+offset+1,cruising);
+    drive.phases_.insert(phase_it,brake);
+    drive.phases_.insert(drive.phases_.begin()+offset+1,cruise_phase);
+    return initial.time_+(end_of_new_cruise_state.dist_-initial.dist_)/initial.speed_-end_of_new_cruise_state.time_==pt.e_time_-current_pt_time;
+  }
+  auto start_dist = find_start_distance(drive,phase_it,types_it);
+
+}*/
 /**
  *
  * @param drive

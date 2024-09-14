@@ -9,6 +9,7 @@
 #include "soro/utls/print_progress.h"
 #include "soro/utls/std_wrapper/contains.h"
 #include "soro/utls/std_wrapper/count_if.h"
+#include "soro/utls/std_wrapper/any_of.h"
 
 #include "soro/infrastructure/infrastructure.h"
 
@@ -20,6 +21,10 @@
 
 #include "test/file_paths.h"
 
+#include "soro/runtime/common/train_path_envelope.h"
+#include "soro/runtime/common/tpe_respecting_travel.h"
+#include "soro/runtime/common/get_intervals.h"
+#include "soro/runtime/physics/rk4/brake.h"
 namespace soro::runtime::test {
 
 using namespace utl;
@@ -27,7 +32,8 @@ using namespace soro::tt;
 using namespace soro::utls;
 using namespace soro::infra;
 using namespace soro::test;
-
+using namespace soro::runtime::rk4;
+using namespace soro::train_path_envelope;
 TEST_SUITE("runtime suite") {
 
   void check_halt_count(train const& t, timestamps const& ts) {
@@ -284,6 +290,51 @@ TEST_SUITE("runtime suite") {
     }
   }
 
+  tpe_points get_tpe_points(train const& t, infrastructure const& infra,
+                                                       infra::type_set const& record_types){
+    auto timestamps = runtime_calculation(t,infra,record_types,use_surcharge::no);
+    tpe_points pts;
+    for(auto e:timestamps.times_) {
+      tpe_point point(e.dist_, si::time(e.arrival_.count()),
+                      si::time(e.departure_.count()), si::speed::zero(),
+                      si::speed::infinity());
+      pts.push_back(point);
+    }
+    return pts;
+  }
+  void check_merge_tpe(soro::vector<train> const& trains,infrastructure const& infra,infra::type_set const& record_types){
+    for(auto const& t:trains){
+      auto points = get_tpe_points(t,infra,record_types);
+      std::sort(points.begin(),points.end());
+      soro::tpe_simulation::merge_duplicate_tpe_points(points);
+      if(!std::is_sorted(points.begin(),points.end())) throw std::logic_error("points arent sorted after merge");
+      auto end = std::unique(points.begin(),points.end(),[](tpe_point const& pt1,tpe_point const& pt2){return pt1.distance_==pt2.distance_;});
+      if(points.end()!=end){
+        throw std::logic_error("check merge tpe failed");
+      }
+    }
+  }
+  void check_split_intervals(soro::vector<train> const& trains,infrastructure const& infra,infra::type_set const& record_types){
+    for(auto const& t: trains){
+      auto intervals = get_intervals(t,record_types,infra);
+      auto pts = get_tpe_points(t,infra,record_types);
+      std::sort(pts.begin(),pts.end());
+      soro::tpe_simulation::merge_duplicate_tpe_points(pts);
+      auto split_intervals = soro::tpe_simulation::split_intervals(intervals,pts,t.physics_);
+      if(utls::any_of(split_intervals.p_,[](interval_point const& pt){return pt.limit_.is_negative();}))throw std::logic_error("point has negative limit");
+      if(!std::is_sorted(split_intervals.p_.begin(),split_intervals.p_.end(),[](interval_point const& p1,interval_point const& p2){return p1.distance_<p2.distance_;})) throw std::logic_error("Interval points arent ordered");
+
+      for(auto const& pt:pts) {
+        auto it = utls::find_if(split_intervals.p_,[pt](interval_point const& int_point){return int_point.distance_==pt.distance_;});
+        if(it==split_intervals.p_.end()) throw std::logic_error("split_interval didnt work");
+        auto it2 = utls::find_if(intervals.p_,[it](interval_point const& pt1){return pt1.distance_==it->distance_;});
+        if(it2==intervals.p_.end()) {
+          int count = std::count_if(split_intervals.p_.begin(),split_intervals.p_.end(),[it](interval_point const& ip){return ip.distance_==it->distance_;});
+          if(count!=1) throw std::logic_error("split interval created point with same distance as another");
+        }
+      }
+    }
+  }
   TEST_CASE("runtime iss") {
     auto const infra = utls::try_deserializing<infrastructure>(
         "de_iss_runtime.raw", DE_ISS_OPTS);
@@ -433,8 +484,136 @@ TEST_SUITE("runtime suite") {
     check_runtime(infra, tt);
     check_delays(infra, tt);
   }
+  TEST_CASE("split intervals hill"){
+    infrastructure const infra(HILL_OPTS);
+    timetable const tt(HILL_TT_OPTS, infra);
+    check_split_intervals({tt->trains_[0]},infra,type_set({type::HALT,type::EOTD}));
+  }
+  TEST_CASE("split intervals intersection"){
+    infrastructure const infra(INTER_OPTS);
+    timetable const tt(INTER_TT_OPTS, infra);
+    check_split_intervals({tt->trains_[0]},infra,type_set({type::HALT,type::EOTD}));
+  }
+  TEST_CASE("split intervals follow"){
+    infrastructure const infra(SMALL_OPTS);
+    timetable const tt(FOLLOW_OPTS, infra);
+    check_split_intervals(tt->trains_,infra,type_set({type::HALT,type::EOTD}));
+  }
+  TEST_CASE("split intervals cross"){
+    auto const infra =
+        utls::try_deserializing<infrastructure>("small_opts.raw", SMALL_OPTS);
+    auto const tt =
+        utls::try_deserializing<timetable>("cross_opts.raw", CROSS_OPTS, infra);
+    check_split_intervals(tt->trains_,infra,type_set({type::HALT,type::EOTD}));
+  }
+  TEST_CASE("merge tpe_points intersection"){
+    infrastructure const infra(INTER_OPTS);
+    timetable const tt(INTER_TT_OPTS, infra);
+    check_merge_tpe({tt->trains_[0]},infra,type_set({type::HALT,type::EOTD}));
+  }
+  TEST_CASE("merge tpe_points follow"){
+    infrastructure const infra(SMALL_OPTS);
+    timetable const tt(FOLLOW_OPTS, infra);
+    check_merge_tpe(tt->trains_,infra,type_set({type::HALT,type::EOTD}));
+  }
+  TEST_CASE("merge tpe_points hill"){
+    infrastructure const infra(HILL_OPTS);
+    timetable const tt(HILL_TT_OPTS, infra);
+    soro::vector<train> trains = {tt->trains_.begin(),tt->trains_.end()-1};
+    std::cout<<trains.size()<<std::endl;
+    check_merge_tpe({trains[0]},infra,type_set({type::HALT,type::EOTD}));
+  }
+  TEST_CASE("merge tpe_points cross"){
+    auto const infra =
+        utls::try_deserializing<infrastructure>("small_opts.raw", SMALL_OPTS);
+    auto const tt =
+        utls::try_deserializing<timetable>("cross_opts.raw", CROSS_OPTS, infra);
+    check_merge_tpe(tt->trains_,infra,type_set({type::HALT,type::EOTD}));
+  }
+  TEST_CASE("merge tpe_points"){
+    auto pt1 = train_path_envelope::tpe_point(si::length::zero(),si::time{100},si::time{200},si::speed{0},si::speed{200});
+    auto pt2 = train_path_envelope::tpe_point(si::length{100},si::time{100},si::time{200},si::speed{50},si::speed{300});
+    auto pt3 = train_path_envelope::tpe_point(si::length{200},si::time{100},si::time{200},si::speed{2},si::speed{200});
+    auto pt4 = train_path_envelope::tpe_point(si::length{250},si::time{100},si::time{200},si::speed{3},si::speed{200});
+    train_path_envelope::tpe_points pts = {pt1,pt2,pt3,pt4};
+    train_path_envelope::tpe_points pts_check = {pt1,pt2,pt3,pt4};
+    soro::tpe_simulation::merge_duplicate_tpe_points(pts);
+    if(pts!=pts_check) {
+      std::for_each(pts.begin(),pts.end(),[](train_path_envelope::tpe_point pt){std::cout<<pt.distance_<<std::endl;});
+      throw std::logic_error("pts was unexpectedly changed");
+    }
+    pt2.distance_ = si::length::zero();
+    pt2.v_max_ = si::speed(300);
+    pt2.v_min_ = si::speed(50);
+    soro::vector<soro::train_path_envelope::tpe_point> pts2 = {pt1,pt2,pt3,pt4};
+    soro::tpe_simulation::merge_duplicate_tpe_points(pts2);
+    if(pts2.size()!=3) {
+      std::cout<<pts2.size()<<std::endl;
+      std::for_each(pts2.begin(),pts2.end(),[](train_path_envelope::tpe_point pt){std::cout<<pt.distance_<<std::endl;});
+      throw std::logic_error("pts2 has wrong size when changing pt2");
+    }
+    CHECK_EQ(pts2[0],train_path_envelope::tpe_point(si::length::zero(),si::time{100},si::time{200},si::speed{50},si::speed{200}));
+    CHECK_EQ(pts2[1],pt3);
+    CHECK_EQ(pts2[2],pt4);
+    soro::vector<soro::train_path_envelope::tpe_point> pts3 = {pt1,pt1,pt1,pt3,pt4};
+    soro::tpe_simulation::merge_duplicate_tpe_points(pts3);
+    if(pts3.size()!=3){
+      std::cout<<pts.size()<<std::endl;
+      throw std::logic_error("pts has wrong size with 3 pt1");
+    }
+    CHECK_EQ(pts3[0],pt1);
+    CHECK_EQ(pts3[1],pt3);
+    CHECK_EQ(pts3[2],pt4);
+  }
+  TEST_CASE("sort test tpe"){
+    auto pt1 = train_path_envelope::tpe_point(si::length::zero(),si::time{100},si::time{200},si::speed{0},si::speed{200});
+    auto pt2 = train_path_envelope::tpe_point(si::length::zero(),si::time{100},si::time{200},si::speed{50},si::speed{300});
+    auto pt3 = train_path_envelope::tpe_point(si::length{200},si::time{100},si::time{200},si::speed{2},si::speed{200});
+    auto pt4 = train_path_envelope::tpe_point(si::length{250},si::time{100},si::time{200},si::speed{3},si::speed{200});
+    //for(int i=0;i<100;++i){
+
+      soro::vector<train_path_envelope::tpe_point> points = {pt4,pt2,pt3,pt1};
+      std::sort(points.begin(),points.end(),[](train_path_envelope::tpe_point e1, train_path_envelope::tpe_point e2) { return e1 < e2; });
+      std::for_each(points.begin(),points.end(),[](train_path_envelope::tpe_point pt){std::cout<<pt.distance_<<std::endl;});
+      if(!std::is_sorted(points.begin(),points.end(),[](train_path_envelope::tpe_point e1, train_path_envelope::tpe_point e2) { return e1 < e2; }))throw std::logic_error("L");
+    //}
+  }
+  TEST_CASE("test split interval"){
+    auto const infra =
+        utls::try_deserializing<infrastructure>("small_opts.raw", SMALL_OPTS);
+    auto const tt =
+        utls::try_deserializing<timetable>("cross_opts.raw", CROSS_OPTS, infra);
+    auto train = tt->trains_.front();
+    auto route_intervals =
+        get_intervals(train, soro::infra::type_set::all(), infra);
+    auto first_dist = route_intervals.p_.front().distance_;
+    auto last_dist = route_intervals.p_.back().distance_;
+    auto pt1 = train_path_envelope::tpe_point(first_dist,si::time{100},si::time{200},si::speed{0},si::speed{200});
+    auto pt2 = train_path_envelope::tpe_point(first_dist+(last_dist-first_dist)/3,si::time{100},si::time{200},si::speed{50},si::speed{300});
+    auto pt3 = train_path_envelope::tpe_point(first_dist+2*(last_dist-first_dist)/3,si::time{100},si::time{200},si::speed{2},si::speed{200});
+    auto pt4 = train_path_envelope::tpe_point(last_dist,si::time{100},si::time{200},si::speed{3},si::speed{200});
+    soro::vector<train_path_envelope::tpe_point> points = {pt1,pt2,pt3,pt4};
+    auto intervals = soro::tpe_simulation::split_intervals(route_intervals,points,train.physics_);
+    for(auto pt : points){
+      if(!utls::any_of(intervals.p_,[pt](auto int_p){return int_p.distance_==pt.distance_;})){
+        throw std::logic_error("Found no point with distance "+std::to_string(pt.distance_.val_));
+      }
+    }
+  }
 }
 TEST_CASE("Omar Runtime"){
   std::cout<<"Hallo"<<std::endl;
+}
+TEST_CASE("Test erase"){
+  soro::vector<int> numbers = {1,2,3,3,4,5};
+  auto it = numbers.begin();
+  numbers.erase(it,it+2);
+  std::for_each(numbers.begin(),numbers.end(),[](int num){std::cout<<num<<std::endl;});
+}
+TEST_CASE("Test insert"){
+  soro::vector<int> numbers = {1,2,3,4,5};
+  auto it = numbers.begin()+3;
+  numbers.insert(it,3);
+  std::for_each(numbers.begin(),numbers.end(),[](int num){std::cout<<num<<std::endl;});
 }
 }  // namespace soro::runtime::test

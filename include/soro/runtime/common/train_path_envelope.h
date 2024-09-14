@@ -18,9 +18,9 @@ struct tpe_point{
   bool operator<(tpe_point const o) const{
     return this->distance_<o.distance_;
   }
-  tpe_point operator=(tpe_point o){
-    return o;
-  }
+
+  bool operator==(tpe_point const& o) const = default;
+
 };
 using tpe_points = soro::vector<tpe_point>;
 } // namespace soro::train_path_envelope

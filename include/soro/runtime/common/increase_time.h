@@ -17,9 +17,9 @@ struct train_drive{
 
 bool check_AHD(train_drive& drive);
 
-bool check_AHA(train_drive& drive);*/
+bool check_AHA(train_drive& drive);
 
-bool check_HDH(train_drive& drive);
+bool check_HDH(train_drive& drive);*/
 
 bool check_DHA(train_drive& drive);
 

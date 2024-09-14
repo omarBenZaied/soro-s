@@ -119,7 +119,7 @@ std::vector<drive_event> get_events(train_state const initial,
 
   if (commands.empty()) {
     for (auto const& record : interval.records()) {
-      result.emplace_back(record.node_, si::time::zero());
+      result.emplace_back(record.node_, si::length::zero(),si::time::zero());
     }
     return result;
   }
@@ -149,7 +149,7 @@ std::vector<drive_event> get_events(train_state const initial,
                       event_arrival <= current.time_ + current_command->time_,
                   "event arrival must be in time range");
 
-    result.emplace_back(record.node_, event_arrival);
+    result.emplace_back(record.node_, record.dist_,event_arrival);
   }
 
   return result;

@@ -12,7 +12,7 @@
 #include "soro/runtime/physics/rk4/detail/brake_accel_intersection.h"
 #include "soro/utls/std_wrapper/any_of.h"
 //#include "soro-s/src/runtime/common/get_intervals.cc"
-namespace tpe_simulation {
+namespace soro::tpe_simulation {
 using namespace soro::runtime;
 using namespace soro::train_path_envelope;
 using namespace soro;
@@ -22,7 +22,7 @@ using namespace soro;
  * @param intervals the intervals of the journey
  * @param pts an ordered list of points
  * @param tp train physics
- * @return
+ * @return the new intervals object
  */
 intervals split_intervals(intervals const& intervals, tpe_points const& pts,rs::train_physics const& tp) {
   if(pts.empty()) return intervals;
@@ -30,23 +30,26 @@ intervals split_intervals(intervals const& intervals, tpe_points const& pts,rs::
   auto intr_points = intervals.p_;
   intr_points.reserve(intr_points.size()+pts.size());
   auto it = intr_points.begin();
+  auto it_offset = 0;
   utls::sassert(it->distance_<=pts.front().distance_,"TPE_Points before the ride even begins.");
   utls::sassert(intr_points.back().distance_>=pts.back().distance_,"TPE_Points happen after end.");
+  auto created_new_point = false;
   for (auto const& point : pts) {
-    while (it != intr_points.end() && it->distance_ < point.distance_) {
+    while (it->distance_ < point.distance_) {
       ++it;
+      ++it_offset;
     }
     if (it->distance_ != point.distance_) {
+      created_new_point = true;
       auto intr_point = *(it - 1);
-      // geht das so?
       interval_point new_point(intr_point);
       new_point.distance_ = point.distance_;
       fix_short_interval(new_point,*it,tp);
       intr_points.insert(it, new_point);
-      // Das hier macht nur sinn, falls it nach dem insert auf den neu eingefügten wert zeigt
-      ++it;
+      it = intr_points.begin()+(++it_offset);
     }
   }
+  if(created_new_point) std::cout<<created_new_point<<std::endl;
   result.p_ = intr_points;
   return result;
 }
@@ -59,16 +62,20 @@ intervals split_intervals(intervals const& intervals, tpe_points const& pts,rs::
  */
 void merge_duplicate_tpe_points(tpe_points& points){
   auto it = points.begin();
-  while(it<points.end()-1){
+  auto it_offset = 0;
+  while(it<(points.end()-1)){
     if(it->distance_==(it+1)->distance_){
       auto it2 = it+1;
       auto new_pt = tpe_point(it->distance_,std::max(it->e_time_,it2->e_time_),std::min(it->l_time_,it2->l_time_),std::max(it->v_min_,it2->v_min_),std::min(it->v_max_,it2->v_max_));
-      points.erase(it);
-      points.erase(it);
+      points.erase(it,it+2);
+      it = points.begin()+it_offset;
       points.insert(it,new_pt);
-      //--it; Das hier ist nicht nötig, falls it so oder so durch das insert auf new_pt verweist
+      it = points.begin()+it_offset;
     }
-    else ++it;
+    else {
+      ++it_offset;
+      ++it;
+    }
   }
 }
 /**
@@ -161,6 +168,7 @@ soro::vector<train_state> slowest_drive(train_state initial, tpe_point const& pt
   }
   auto [state,index] = find_intersection(brake_states,accel_states,intr_copy,tp);
   utls::sassert(index!=-1,"find_intersection found no intersection even though there should be one");
+  //FInde nach richtiger stelle in accel_states
   accel_states.push_back(state);
   std::reverse(accel_states.begin(),accel_states.end());
   brake_states.erase(brake_states.begin()+index+1,brake_states.end());

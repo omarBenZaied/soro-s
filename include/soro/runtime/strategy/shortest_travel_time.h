@@ -14,7 +14,12 @@ namespace soro::runtime {
 
 struct drive_event {
   infra::node::ptr node_;
+  si::length  dist_;
   si::time arrival_;
+
+  drive_event(infra::node::ptr node,si::length dist, si::time arrival):node_{node},arrival_{arrival},dist_{dist}{}
+  drive_event(infra::node::ptr node, si::time arrival):node_{node},arrival_{arrival},dist_{si::length::zero()}{}
+
 };
 
 struct delta : train_state {

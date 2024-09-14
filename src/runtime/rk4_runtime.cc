@@ -45,7 +45,7 @@ void determine_events(std::vector<drive_event> const& events,
 
   for (auto const& event : events) {
     e.element_ = event.node_->element_;
-
+    e.dist_ = event.dist_;
     e.arrival_ =
         start_time + to_relative(current + (event.arrival_ * surcharge));
     e.departure_ = e.arrival_;
