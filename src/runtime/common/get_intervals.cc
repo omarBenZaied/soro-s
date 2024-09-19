@@ -144,6 +144,9 @@ si::speed get_max_possible_speed_limit(si::speed const target_speed,
 
 void fix_short_interval(interval_point& p1, interval_point const& p2,
                         train_physics const& tp) {
+  if(p1.distance_==p2.distance_){
+    p1.limit_ = std::min(p1.limit_,p2.limit_);
+  }
   interval const interval{&p1, &p2};
 
   auto const initial_speed = interval.speed_limit(tp);

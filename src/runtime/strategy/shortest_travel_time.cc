@@ -51,7 +51,9 @@ si::time get_arrival(record const& record, train_state const& state,
   auto const dist = record.dist_ - state.dist_;
   utls::sassert(si::length::zero() <= dist && dist <= command.dist_,
                 "offset dist must be in range of the command");
-
+  if(dist==si::length::zero()){
+    return si::time::zero();
+  }
   switch (command.action_) {
     case command::action::accelerate: {
       auto const accel =
@@ -140,7 +142,10 @@ std::vector<drive_event> get_events(train_state const initial,
       current.speed_ = current_command->speed_;
       current_command += 1;
     }
-
+    if(std::next(current_command)==std::end(commands)&&record.dist_>current.dist_+current_command->dist_){
+      std::cout<<(current_command->dist_+current.dist_>=interval.end_distance())<<std::endl;
+      throw std::logic_error("record past last command");
+    }
     auto const event_arrival =
         current.time_ +
         get_arrival(record, current, *current_command, interval, tp);
@@ -211,7 +216,6 @@ delta shortest_travel_time::drive(train_state const& initial, train_safety*,
                                   train::trip const& trip,
                                   signal_time const& signal_time) {
   this->update(interval, train, trip, initial, signal_time);
-
   if (interval.length().is_zero()) {
     auto result = delta::zero();
     result.events_ = get_events(initial, {}, interval, train.physics_);
@@ -231,7 +235,7 @@ delta shortest_travel_time::drive(train_state const& initial, train_safety*,
   auto const max_speed = get_max_speed(interval, tp);
   auto const target_speed = get_target_speed(interval, tp);
 
-  utls::sassert(initial.speed_ <= max_speed, "no speeding");
+  utls::sassert(initial.speed_ <= max_speed, "no speeding beginning");
 
   auto const init_tractive = tp.tractive_force(initial.speed_);
   auto const init_resistive =
@@ -276,7 +280,6 @@ delta shortest_travel_time::drive(train_state const& initial, train_safety*,
   if (should_brake) {
     commands.emplace_back(command::action::brake, brake);
   }
-
   utls::ensure(!commands.empty(), "no commands generated");
   utls::ensure(commands.size() < 4, "too many commands generated");
 
@@ -291,7 +294,7 @@ delta shortest_travel_time::drive(train_state const& initial, train_safety*,
 
   utls::ensure(result.dist_ == interval.length(),
                "must exactly cover interval");
-  utls::ensure(new_speed <= interval.target_speed(tp), "no speeding");
+  utls::ensure(new_speed <= interval.target_speed(tp), "no speeding end");
   utls::ensure(result.events_.size() == interval.records().size(),
                "must have an event for each record");
 

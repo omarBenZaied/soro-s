@@ -121,7 +121,7 @@ struct static_vector {
     utls::sassert(end_ != MaxSize, "going over size {}", MaxSize);
     new (&mem_[end_]) T(args...);
     ++end_;
-    return back();
+    return mem_[end_-1];
   }
 
   constexpr void push_back(T const& t) {

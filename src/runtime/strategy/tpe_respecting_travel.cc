@@ -33,23 +33,26 @@ intervals split_intervals(intervals const& intervals, tpe_points const& pts,rs::
   auto it_offset = 0;
   utls::sassert(it->distance_<=pts.front().distance_,"TPE_Points before the ride even begins.");
   utls::sassert(intr_points.back().distance_>=pts.back().distance_,"TPE_Points happen after end.");
-  auto created_new_point = false;
   for (auto const& point : pts) {
     while (it->distance_ < point.distance_) {
       ++it;
       ++it_offset;
     }
     if (it->distance_ != point.distance_) {
-      created_new_point = true;
       auto intr_point = *(it - 1);
       interval_point new_point(intr_point);
+      auto records_it = utls::find_if((it-1)->records_,[point](record const& r){return r.dist_>=point.distance_;});
+      auto records_to_move = soro::vector<record>{records_it,(it-1)->records_.end()};
+      (it-1)->records_.erase(records_it,(it-1)->records_.end());
       new_point.distance_ = point.distance_;
-      fix_short_interval(new_point,*it,tp);
+      new_point.records_ = records_to_move;
       intr_points.insert(it, new_point);
       it = intr_points.begin()+(++it_offset);
     }
   }
-  if(created_new_point) std::cout<<created_new_point<<std::endl;
+  for(auto i=intr_points.size()-1;i>0;--i){
+    fix_short_interval(intr_points[i-1],intr_points[i],tp);
+  }
   result.p_ = intr_points;
   return result;
 }
@@ -237,22 +240,47 @@ void fix_tpe_speeds(tpe_points& points,interval interval,rs::train_physics const
   auto max_speed = get_possible_max_speed(start_state.dist_,interval,end_state,tp);
   if(start_state.speed_>max_speed) throw std::logic_error("speed of start is too fast, tpe not drivable");
 }
+
+soro::vector<interval_point> fix_intervals(interval interval,tpe_point const& point,rs::train_physics const& tp){
+  soro::vector<interval_point> new_intervals;
+  while(interval.end_distance()!=point.distance_){
+    new_intervals.push_back(*interval.p1_);
+    ++interval;
+  }
+  while(interval.end_distance()==point.distance_){
+    new_intervals.push_back(*interval.p1_);
+    ++interval;
+  }
+  new_intervals.push_back(*interval.p1_);
+  if(new_intervals[new_intervals.size()-1].limit_>point.v_max_){
+    new_intervals[new_intervals.size()-1].limit_ = point.v_max_;
+    for(auto i=new_intervals.size()-1;i>0;--i) {
+      fix_short_interval(new_intervals[i-1],new_intervals[i],tp);
+    }
+  }
+  return new_intervals;
+}
+
 train_state get_end_state(train_state current_state,tpe_point const& pt, interval& interval,
                     train_safety* train_safety,soro::tt::train const& train,soro::tt::train::trip const& trip){
   signal_time signal_time;
+  signal_time.time_ = ZERO<absolute_time>;
   shortest_travel_time shortest_travel_time;
-  while(interval.start_distance()<pt.distance_){
-    auto p = interval.p2_;
-    //TODO: hier MUSS ich noch fix_short_intervals reinhämmern
+  auto new_intervals = fix_intervals(interval,pt,train.physics_);
+  struct interval fixed_interval = {new_intervals.data(),new_intervals.data()+1};
+  while(current_state.dist_<pt.distance_){
+    /*auto p = interval.p2_;
     if(interval.end_distance()==pt.distance_&&pt.v_max_<p->limit_){
       auto new_interval_point = *interval.p2_;
       new_interval_point.limit_ = pt.v_max_;
       interval.p2_ = &new_interval_point;
-    }
+    }*/
     current_state += shortest_travel_time.drive(
-        current_state, train_safety, interval, train, trip, signal_time);
-    if(interval.end_distance()==pt.distance_) interval.p2_ = p;
+        current_state, train_safety, fixed_interval, train, trip, signal_time);
+    current_state.dist_ = fixed_interval.end_distance();
+    //if(interval.end_distance()==pt.distance_) interval.p2_ = p;
     ++interval;
+    ++fixed_interval;
     utls::sassert(
         current_state.time_ <= pt.l_time_,
         "TPE-Point at distance {} with latest time {} can't be achieved",
