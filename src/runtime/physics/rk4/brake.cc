@@ -52,4 +52,12 @@ train_state brake_backwards(train_state state,si::accel deaccel, si::length stop
   result.speed_ = std::min(result.speed_,max_speed);
   return result;
 }
+train_state brake_over_distance_with_target(train_state const& state,si::accel const& deaccel,si::length const&  stop_distance,si::speed const& target_speed){
+  auto brake_state = brake_over_distance(state.speed_,deaccel,stop_distance);
+  if(brake_state.speed_<target_speed) brake_state = brake(state.speed_,target_speed,deaccel);
+  train_state result(state);
+  result+=brake_state;
+  result.speed_ = brake_state.speed_;
+  return result;
+}
 }  // namespace soro::runtime::rk4

@@ -113,15 +113,15 @@ struct static_vector {
   constexpr T& front() { return mem_.front(); }
   constexpr T const& front() const { return mem_.front(); }
 
-  constexpr T& back() { return mem_[end_]; }
-  constexpr T const& back() const { return mem_[end_]; }
+  constexpr T& back() { return mem_[end_-1]; }
+  constexpr T const& back() const { return mem_[end_-1]; }
 
   template <typename... Args>
   constexpr T& emplace_back(Args... args) {
     utls::sassert(end_ != MaxSize, "going over size {}", MaxSize);
     new (&mem_[end_]) T(args...);
     ++end_;
-    return mem_[end_-1];
+    return back();
   }
 
   constexpr void push_back(T const& t) {

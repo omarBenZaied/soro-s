@@ -20,5 +20,5 @@ train_state get_intersection_at_max_dist(si::length const length,
                                          train_state const last,
                                          si::slope const slope,
                                          rs::train_physics const& tp);
-
+train_state get_intersection_at_speed(si::speed const& speed,train_state const& state_under,train_state const& state_over);
 }  // namespace soro::runtime::rk4::detail

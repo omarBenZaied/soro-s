@@ -411,6 +411,27 @@ TEST_SUITE("runtime suite") {
         }
       }
     }
+    void check_tpe_respecting_travel(soro::vector<train> const& trains,infrastructure const& infra,infra::type_set const& record_types,
+                                     std::function<tpe_point(tpe_point const&)> const& tpe_changer,
+                                     std::function<tpe_points(train const&,infrastructure const&,infra::type_set const&)> const& points_maker=get_tpe_points){
+      for(auto const& t:trains){
+        auto points = points_maker(t,infra,record_types);
+        auto intervals = get_intervals(t,record_types,infra);
+        for(auto i=0;i<points.size();++i) points[i]=tpe_changer(points[i]);
+        train_state initial;
+        initial.dist_ = intervals.begin().start_distance();
+        initial.time_ = si::time(t.start_time_.count());
+        initial.speed_ = t.start_speed_;
+        train::trip const trip(train::trip::id{0}, t.id_, ZERO<absolute_time>);
+        auto results = soro::tpe_simulation::tpe_respecting_simulation(points,initial,nullptr,t,trip,infra,record_types);
+        CHECK_EQ(results.size(),points.size());
+        for(int i=0;i<results.size();++i){
+          CHECK_EQ(results[i].dist_,points[i].distance_);
+          CHECK_LE(results[i].speed_,points[i].v_max_);
+          CHECK_GE(results[i].speed_,points[i].v_min_);
+        }
+      }
+    }
     auto changer = [](tpe_point const& pt){
       tpe_point point(pt);
       point.l_time_ = si::time::infinity();
@@ -580,7 +601,6 @@ TEST_SUITE("runtime suite") {
     // check_get_end_state({tt->trains_[0]},infra,infra::type_set({type::HALT,type::EOTD}),latest_time_reducer);
     auto identity = [](tpe_point const& pt){return pt;};
     check_get_end_state({tt->trains_[0]},infra,infra::type_set({type::HALT,type::EOTD}),identity,max_speed_reducer);
-
   }
   TEST_CASE("get_end_state intersection"){
     infrastructure const infra(INTER_OPTS);
@@ -611,6 +631,39 @@ TEST_SUITE("runtime suite") {
     auto identity = [](tpe_point const& pt){return pt;};
     check_get_end_state(tt->trains_,infra,infra::type_set({type::HALT,type::EOTD}),identity,max_speed_reducer);
   }
+  TEST_CASE("tpe_respecting_travel hill") {
+    infrastructure const infra(HILL_OPTS);
+    timetable const tt(HILL_TT_OPTS, infra);
+    auto e_time_changer = [](tpe_point const& pt){tpe_point point(pt);
+      point.e_time_ = point.e_time_*0.9;
+      return point;};
+    check_tpe_respecting_travel({tt->trains_[0]},infra,infra::type_set({type::HALT,type::EOTD}),e_time_changer);
+  }
+  TEST_CASE("tpe_respecting_travel intersection"){
+    infrastructure const infra(INTER_OPTS);
+    timetable const tt(INTER_TT_OPTS, infra);
+    check_tpe_respecting_travel({tt->trains_[0]},infra,infra::type_set({type::HALT,type::EOTD}),changer);
+  }
+  TEST_CASE("tpe_respecting_travel follow"){
+    infrastructure const infra(SMALL_OPTS);
+    timetable const tt(FOLLOW_OPTS, infra);
+    auto e_time_changer = [](tpe_point const& pt){tpe_point point(pt);
+      point.e_time_ = point.e_time_*0.9;
+      point.l_time_ = si::time::infinity();
+      return point;};
+    check_tpe_respecting_travel(tt->trains_,infra,infra::type_set({type::HALT,type::EOTD}),e_time_changer);
+  }
+  TEST_CASE("tpe_resepcting_travel cross"){
+    auto const infra =
+        utls::try_deserializing<infrastructure>("small_opts.raw", SMALL_OPTS);
+    auto const tt =
+        utls::try_deserializing<timetable>("cross_opts.raw", CROSS_OPTS, infra);
+    auto e_time_changer = [](tpe_point const& pt){tpe_point point(pt);
+      point.e_time_ = point.e_time_*0.9;
+      point.l_time_ = si::time::infinity();
+      return point;};
+    check_tpe_respecting_travel(tt->trains_,infra,infra::type_set({type::HALT,type::EOTD}),e_time_changer);
+  }
   TEST_CASE("fix_intervals test"){
     auto const infra =
         utls::try_deserializing<infrastructure>("small_opts.raw", SMALL_OPTS);
@@ -626,7 +679,8 @@ TEST_SUITE("runtime suite") {
     utls::for_each(intervals.p_,[](interval_point const& pt){std::cout<<pt.distance_<<" "<<pt.limit_<<std::endl;});
     std::cout<<std::endl;
     for(auto const& point:points) {
-      auto vector = soro::tpe_simulation::fix_intervals(split_intervals.begin(),
+      auto start_interval = split_intervals.begin();
+      auto vector = soro::tpe_simulation::fix_intervals(start_interval,
                                                         point, train.physics_);
       if (utls::any_of(vector, [](interval_point const& pt) {
             return pt.distance_.is_negative();

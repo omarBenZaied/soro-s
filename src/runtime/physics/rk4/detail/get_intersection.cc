@@ -152,4 +152,11 @@ train_state get_intersection_at_max_dist(si::length const length,
   return result;
 }
 
+train_state get_intersection_at_speed(si::speed const& speed,train_state const& state_before,train_state const& state_after){
+  auto time_dif = state_after.time_-state_before.time_;
+  auto speed_dif = state_after.speed_-state_before.speed_;
+  auto acceleration = speed_dif/time_dif;
+  auto time = (speed-state_before.speed_)/acceleration;
+  return {state_before.time_+time,state_before.dist_+state_before.speed_*time+0.5*acceleration*time.pow<2>(),speed};
+}
 }  // namespace soro::runtime::rk4::detail

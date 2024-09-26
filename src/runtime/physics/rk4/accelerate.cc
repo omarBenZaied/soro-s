@@ -127,6 +127,7 @@ train_state accelerate_with_braking_curve(
   return state;
 }
 
+
 // uses a runge kutta 4th order method to numerically solve the
 // acceleration differential equation
 train_state accelerate(si::speed const initial_speed, si::speed const max_speed,
