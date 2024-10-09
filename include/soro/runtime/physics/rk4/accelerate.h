@@ -15,6 +15,11 @@ train_state accelerate(si::speed const initial_speed, si::speed const max_speed,
                        si::accel const deaccel, si::slope const slope,
                        si::length const stop_at, rs::train_physics const& tp);
 
+soro::vector<train_state> accelerate_with_states(si::speed const initial_speed, si::speed const max_speed,
+                                                 si::speed const target_speed, si::length max_dist,
+                                                 si::accel const deaccel, si::slope const slope,
+                                                 si::length const stop_at, rs::train_physics const& tp);
+
 train_state accelerate_backwards(train_state initial_state,interval const& interval ,rs::train_physics const& tp);
 
 

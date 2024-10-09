@@ -9,7 +9,7 @@
 #include "soro/runtime/common/train_safety.h"
 #include "soro/runtime/common/train_state.h"
 #include "soro/runtime/driver/command.h"
-
+#include "soro/runtime/common/increase_time.h"
 namespace soro::runtime {
 
 struct drive_event {
@@ -33,7 +33,9 @@ struct shortest_travel_time {
   delta drive(train_state const& initial, train_safety* train_safety,
               interval const& interval, tt::train const& train,
               tt::train::trip const& trip, signal_time const& signal_time);
-
+  std::tuple<delta,increase_time::train_drive> create_drive(train_state const& initial, train_safety* train_safety,
+                                                             interval const& interval, tt::train const& train,
+                                                             tt::train::trip const& trip, signal_time const& signal_time);
 private:
   si::speed get_max_speed(interval const& interval,
                           rs::train_physics const& tp) const;

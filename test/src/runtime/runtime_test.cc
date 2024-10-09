@@ -26,6 +26,9 @@
 #include "soro/runtime/common/get_intervals.h"
 #include "soro/runtime/physics/rk4/brake.h"
 #include "soro/runtime/physics/rk4/detail/get_speed_limit.h"
+#include "soro/runtime/common/increase_time.h"
+#include "soro/runtime/common/phase_checkers.h"
+
 namespace soro::runtime::test {
 
 using namespace utl;
@@ -432,6 +435,218 @@ TEST_SUITE("runtime suite") {
         }
       }
     }
+    void check_drive(increase_time::train_drive const& drive,int const& offset){
+      if(offset>=drive.phases_.size()) return;
+      auto unique_it = std::adjacent_find(drive.phase_types_.begin()+offset,drive.phase_types_.end());
+      if(unique_it!=drive.phase_types_.end()) utl::fail("2 neighboring phases {} at offsets {} and {}",*unique_it,unique_it-drive.phase_types_.begin(),unique_it-drive.phase_types_.begin()+1);
+      train_state predecessor;
+      for(int i=offset;i<drive.phases_.size();++i){
+        if(!std::is_sorted(drive.phases_[i].begin(),drive.phases_[i].end(),[](train_state const& st1,train_state const& st2){return st1.dist_<st2.dist_;})){
+          utl::fail("states arent ordered in distance");
+        }
+        if(drive.phases_[i].end()!=std::adjacent_find(drive.phases_[i].begin(),drive.phases_[i].end(),[](train_state const& st1,train_state const& st2){return st1.dist_==st2.dist_;})){
+          utl::fail("states with same distance");
+        }
+        predecessor = offset>0?drive.phases_[offset-1].back():drive.start_state_;
+        CHECK_EQ(drive.phases_[offset].front().dist_,predecessor.dist_);
+        CHECK_EQ(drive.phases_[offset].front().speed_,predecessor.speed_);
+        CHECK_EQ(drive.phases_[offset].front().time_,predecessor.time_);
+        switch (drive.phase_types_[i]){
+          case increase_time::acceleration:
+            if(!std::is_sorted(drive.phases_[i].begin(),drive.phases_[i].end(),
+                                [](train_state const& state1,train_state const& state2){
+                                  return state1.speed_<state2.speed_;
+                                })) throw std::logic_error("speed in acceleration is not ascending");
+            break;
+          case increase_time::cruising:
+            CHECK_EQ(drive.phases_[i].size(),2);
+            CHECK_EQ(drive.phases_[i].front().speed_,drive.phases_[i].back().speed_);
+            if(!drive.phases_[i].front().speed_.is_zero())CHECK_EQ(drive.phases_[i].back().time_-drive.phases_[i].front().time_,increase_time::get_cruise_time(drive.phases_[i].front(),drive.phases_[i].back()));
+            break;
+          case increase_time::braking:
+            if(!std::is_sorted(drive.phases_[i].begin(),drive.phases_[i].end(),
+                                [](train_state const& state1,train_state const& state2){
+                                  return state1.speed_>state2.speed_;
+                                })) throw std::logic_error("brake isnt descending in speed");
+            break;
+          default:throw std::logic_error("Invalid phase type detected");
+        }
+      }
+    }
+    void check_drive_creation(soro::vector<train> const& trains,infrastructure const& infra,infra::type_set const& record_types){
+      shortest_travel_time shortest_travel_time;
+      for(auto const& t:trains){
+        auto tpe_points = get_tpe_points(t,infra,record_types);
+        tpe_simulation::merge_duplicate_tpe_points(tpe_points);
+        auto intervals = tpe_simulation::split_intervals(get_intervals(t,record_types,infra),tpe_points,t.physics_);
+        auto interval = intervals.begin();
+        train_state current;
+        current.time_ = si::time(t.start_time_.count());
+        current.dist_ = si::length::zero();
+        current.speed_ = t.start_speed_;
+        increase_time::train_drive drive;
+        drive.start_state_ = current;
+        signal_time const signal_time;
+        train::trip const trip(train::trip::id{0}, t.id_, ZERO<absolute_time>);
+        while(interval!=intervals.end()){
+          auto drive_size = drive.phase_types_.size();
+          auto [delta,delta_drive] = shortest_travel_time.create_drive(current,nullptr,interval,t,trip,signal_time);
+          current+=delta;
+          drive+=delta_drive;
+          CHECK_EQ(current.dist_,interval.end_distance());
+          CHECK_EQ(delta_drive.phases_.size(),delta_drive.phase_types_.size());
+          if(!drive.phases_.empty()) {
+            CHECK_EQ(drive.phases_.back().back().dist_,interval.end_distance());
+          }
+          CHECK_LE(delta_drive.phases_.size(),3);
+          check_drive(drive,drive_size>0?drive_size-1:0);
+          ++interval;
+        }
+      }
+    }
+    void check_acceleration_possible(vector<train_state> const& accel,vector<interval_point> const& intr_point,train const& t){
+      for(auto const& state: accel){
+        auto it = utls::find_if(intr_point,[state](interval_point const& point){return point.distance_>=state.dist_;});
+        utls::sassert(it!=intr_point.end(),"state has too high distance");
+        if(it+1==intr_point.end()&&it->distance_==state.dist_) continue;
+        interval current_interval  = it->distance_>state.dist_?interval(&*(it-1),&*it):interval(&*it,&*(it+1));
+        auto tractive_force = t.physics_.tractive_force(state.speed_);
+        auto resistive_force = t.physics_.resistive_force(state.speed_,current_interval.slope());
+        if(resistive_force.is_negative()) std::cout<<"resistive force is negative"<<std::endl;
+        utls::sassert(tractive_force>resistive_force.abs(),"acceleration not possible");
+      }
+    }
+    void check_braking_possible(vector<train_state> const& brake,vector<interval_point> const& intr_point,train const& t){
+      for(auto const& state:brake){
+        if(state.dist_ == intr_point.back().distance_)continue;
+        auto it = utls::find_if(intr_point,[state](interval_point const& point){return point.distance_>=state.dist_;});
+        utls::sassert(it!=intr_point.end(),"state has too high distance");
+        interval current_interval  = it->distance_>state.dist_?interval(&*(it-1),&*it):interval(&*it,&*(it+1));
+        auto deaccel = t.physics_.braking_deaccel(current_interval.infra_limit(),current_interval.bwp_limit(),current_interval.brake_path_length());
+        utls::sassert(deaccel.is_negative(),"positive deaccel");
+      }
+    }
+    void check_cruise_possible(vector<train_state> const& cruise,vector<interval_point> const& intr_point,train const& t){
+      auto& start_state = cruise.front();
+      auto& end_state = cruise.back();
+      auto speed = start_state.speed_;
+      auto start_it = utls::find_if(intr_point,[start_state](interval_point const& point){return point.distance_>=start_state.dist_;});
+      auto end_it = utls::find_if(intr_point,[end_state](interval_point const& point){return point.distance_>=end_state.dist_;});
+      start_it = start_it->distance_ == start_state.dist_ ? start_it : start_it-1;
+      while(start_it<end_it-1){
+        interval interval(&*start_it,&*(start_it+1));
+        auto tractive_force = t.physics_.tractive_force(speed);
+        auto resistive_force = t.physics_.resistive_force(speed,start_it->slope_);
+        auto braking_deaccel = t.physics_.braking_deaccel(interval.infra_limit(),interval.bwp_limit(),interval.brake_path_length());
+        utls::sassert(tractive_force>=resistive_force,"tractive_force too weak, cruising is impossible");
+        ++start_it;
+      }
+    }
+    void check_drivable(increase_time::train_drive const& drive,vector<interval_point> const& intr_point,train const& t, int const& offset){
+      for(int i=offset;i<drive.phases_.size();++i){
+        auto phase = drive.phases_[i];
+        switch (drive.phase_types_[i]){
+          case increase_time::acceleration:
+          check_acceleration_possible(phase,intr_point,t);
+          break;
+          case increase_time::braking:
+            check_braking_possible(phase,intr_point,t);
+            break;
+          case increase_time::cruising:
+            check_cruise_possible(phase,intr_point,t);
+            break;
+          default:
+            throw std::logic_error("invalid type detected");
+        }
+      }
+    }
+    int next_index(increase_time::train_drive const& drive,int const& start_index,increase_time::phase_checker const& checker){
+      for(int i=start_index;i<drive.phases_.size()-1;++i){
+        auto t1 = drive.phase_types_[i];
+        auto t2 = drive.phase_types_[i+1];
+        auto t3 = i+2<drive.phases_.size()?drive.phase_types_[i+2]:increase_time::invalid;
+        if(checker(t1,t2,t3)) return i;
+      }
+      return -1;
+    }
+    void AHD_check(increase_time::train_drive& drive,tpe_point const& point,vector<interval_point> const& intr_points,train const& t){
+      if(drive.phases_.empty()) return;
+      increase_time::set_pt(point);
+      int index = next_index(drive,0,increase_time::AHD_checker);
+      while(index!=-1){
+        bool finished = increase_time::check_AHD(drive,index);
+        CHECK_GE(drive.phases_.size(),1);
+        check_drive(drive,0);
+        utl::verify(finished==(drive.phases_.back().back().time_>=point.e_time_),"check_AHD returned wrong result {}",finished);
+        check_drivable(drive,intr_points,t,0);
+        if(finished) return;
+        index= next_index(drive,0,increase_time::AHD_checker);
+      }
+    }
+    void AHA_check(increase_time::train_drive& drive,tpe_point const& point,vector<interval_point> const& intr_points,train const& t){
+      if(drive.phases_.empty()) return;
+      increase_time::set_pt(point);
+      increase_time::set_intervals(intr_points);
+      int index = next_index(drive,0,increase_time::AHA_checker);
+      while(index!=-1){
+        bool finished = increase_time::check_AHA(drive,t.physics_,index);
+        check_drive(drive,index);
+        utl::verify(finished==(drive.phases_.back().back().time_>=point.e_time_),"check_AHA returned wrong result {}",finished);
+        check_drivable(drive,intr_points,t,index);
+        if(finished) return;
+        index=next_index(drive,0,increase_time::AHA_checker);
+      }
+    }
+    void HDH_check(increase_time::train_drive& drive,tpe_point const& point,vector<interval_point> const& intr_points,train const& t){
+      if(drive.phases_.empty()) return;
+      increase_time::set_pt(point);
+      increase_time::set_intervals(intr_points);
+      int index = next_index(drive,0,increase_time::HDH_checker);
+      while(index!=-1){
+        bool finished = increase_time::check_HDH(drive,t.physics_,index);
+        check_drive(drive,index);
+        utl::verify(finished==(drive.phases_.back().back().time_>=point.e_time_),"check_AHA returned wrong result {}",finished);
+        check_drivable(drive,intr_points,t,index);
+        if(finished) return;
+        index=next_index(drive,0,increase_time::HDH_checker);
+      }
+    }
+    void test_check_function(soro::vector<train> const& trains,infrastructure const& infra,infra::type_set const& record_types,int function_to_use) {
+      shortest_travel_time shortest_travel_time;
+      signal_time const signal_time;
+      auto const ARRIVAL_FACTOR = 1.1;
+      for (auto const& t : trains) {
+        auto tpe_points = get_tpe_points(t, infra, record_types);
+        tpe_simulation::merge_duplicate_tpe_points(tpe_points);
+        auto intervals = tpe_simulation::split_intervals(
+            get_intervals(t, record_types, infra), tpe_points, t.physics_);
+        train_state current;
+        current.time_ = si::time(t.start_time_.count());
+        current.dist_ = si::length::zero();
+        current.speed_ = t.start_speed_;
+        increase_time::train_drive drive;
+        drive.start_state_ = current;
+        train::trip const trip(train::trip::id{0}, t.id_, ZERO<absolute_time>);
+        auto point_index = intervals.begin().length().is_zero() ? 0 : 1;
+        for (auto const& interval : intervals) {
+          auto [delta, delta_drive] = shortest_travel_time.create_drive(
+              current, nullptr, interval, t, trip, signal_time);
+          drive += delta_drive;
+          current += delta;
+          if (interval.end_distance() == tpe_points[point_index].distance_) {
+            tpe_points[point_index].e_time_ = tpe_points[point_index].e_time_*ARRIVAL_FACTOR;
+            tpe_points[point_index].l_time_ = std::max(tpe_points[point_index].l_time_,tpe_points[point_index].e_time_);
+            if(function_to_use==0) AHD_check(drive,tpe_points[point_index],intervals.p_,t);
+            if(function_to_use==1) AHA_check(drive,tpe_points[point_index],intervals.p_,t);
+            if(function_to_use==2) HDH_check(drive,tpe_points[point_index],intervals.p_,t);
+            drive.erase_elements(0, drive.phases_.size());
+            drive.start_state_ = current;
+            ++point_index;
+          }
+        }
+      }
+    }
+
     auto changer = [](tpe_point const& pt){
       tpe_point point(pt);
       point.l_time_ = si::time::infinity();
@@ -443,6 +658,7 @@ TEST_SUITE("runtime suite") {
       if(new_point.e_time_>new_point.l_time_) new_point.e_time_ = new_point.l_time_;
       return new_point;
     };
+
   TEST_CASE("runtime iss") {
     auto const infra = utls::try_deserializing<infrastructure>(
         "de_iss_runtime.raw", DE_ISS_OPTS);
@@ -455,7 +671,23 @@ TEST_SUITE("runtime suite") {
     //    check_runtime(infra, tt);
     //    check_delays(infra, tt);
   }
-
+  TEST_CASE("print split intervals"){
+    auto const infra =
+        utls::try_deserializing<infrastructure>("small_opts.raw", SMALL_OPTS);
+    auto const tt =
+        utls::try_deserializing<timetable>("cross_opts.raw", CROSS_OPTS, infra);
+    auto train = tt->trains_[0];
+    auto tpe_points = get_tpe_points(train,infra,infra::type_set({type::HALT,type::EOTD}));
+    tpe_simulation::merge_duplicate_tpe_points(tpe_points);
+    auto intervals = get_intervals(train,infra::type_set({type::HALT,type::EOTD}),infra);
+    for(auto const& interval: intervals){
+      std::cout<<interval.end_distance()<<" "<<interval.target_speed(train.physics_)<<std::endl;
+    }
+    intervals = tpe_simulation::split_intervals(intervals,tpe_points,train.physics_);
+    for(auto const& interval: intervals){
+      std::cout<<interval.end_distance()<<" "<<interval.target_speed(train.physics_)<<std::endl;
+    }
+  }
   TEST_CASE("runtime hill") {
     infrastructure const infra(HILL_OPTS);
     timetable const tt(HILL_TT_OPTS, infra);
@@ -542,7 +774,6 @@ TEST_SUITE("runtime suite") {
                                             use_surcharge::no));
     }
   }
-
   TEST_CASE("runtime intersection") {
     infrastructure const infra(INTER_OPTS);
     timetable const tt(INTER_TT_OPTS, infra);
@@ -664,6 +895,60 @@ TEST_SUITE("runtime suite") {
       return point;};
     check_tpe_respecting_travel(tt->trains_,infra,infra::type_set({type::HALT,type::EOTD}),e_time_changer);
   }
+  TEST_CASE("drive creation hill"){
+    infrastructure const infra(HILL_OPTS);
+    timetable const tt(HILL_TT_OPTS, infra);
+    check_drive_creation({tt->trains_[0]},infra,infra::type_set({type::HALT,type::EOTD}));
+  }
+  TEST_CASE("drive creation intersection"){
+    infrastructure const infra(INTER_OPTS);
+    timetable const tt(INTER_TT_OPTS, infra);
+    check_drive_creation({tt->trains_[0]},infra,infra::type_set({type::HALT,type::EOTD}));
+  }
+  TEST_CASE("drive creation follow"){
+    infrastructure const infra(SMALL_OPTS);
+    timetable const tt(FOLLOW_OPTS, infra);
+    check_drive_creation(tt->trains_,infra,infra::type_set({type::HALT,type::EOTD}));
+  }
+  TEST_CASE("drive creation cross"){
+    auto const infra =
+        utls::try_deserializing<infrastructure>("small_opts.raw", SMALL_OPTS);
+    auto const tt =
+        utls::try_deserializing<timetable>("cross_opts.raw", CROSS_OPTS, infra);
+    check_drive_creation(tt->trains_,infra,infra::type_set({type::HALT,type::EOTD}));
+  }
+  TEST_CASE("increase time check methods hill"){
+    infrastructure const infra(HILL_OPTS);
+    timetable const tt(HILL_TT_OPTS, infra);
+    auto train = tt->trains_[0];
+    test_check_function({train},infra,infra::type_set({type::HALT,type::EOTD}),0);
+    test_check_function({train},infra,infra::type_set({type::HALT,type::EOTD}),1);
+    test_check_function({train},infra,infra::type_set({type::HALT,type::EOTD}),2);
+  }
+  TEST_CASE("increase time check methods intersection"){
+    infrastructure const infra(INTER_OPTS);
+    timetable const tt(INTER_TT_OPTS, infra);
+    auto train = tt->trains_[0];
+    test_check_function({train},infra,infra::type_set({type::HALT,type::EOTD}),0);
+    test_check_function({train},infra,infra::type_set({type::HALT,type::EOTD}),1);
+    test_check_function({train},infra,infra::type_set({type::HALT,type::EOTD}),2);
+  }
+  TEST_CASE("increase time check methods follow"){
+    infrastructure const infra(SMALL_OPTS);
+    timetable const tt(FOLLOW_OPTS, infra);
+    test_check_function(tt->trains_,infra,infra::type_set({type::HALT,type::EOTD}),0);
+    test_check_function(tt->trains_,infra,infra::type_set({type::HALT,type::EOTD}),1);
+    test_check_function(tt->trains_,infra,infra::type_set({type::HALT,type::EOTD}),2);
+  }
+  TEST_CASE("increase time check methods cross"){
+    auto const infra =
+        utls::try_deserializing<infrastructure>("small_opts.raw", SMALL_OPTS);
+    auto const tt =
+        utls::try_deserializing<timetable>("cross_opts.raw", CROSS_OPTS, infra);
+    test_check_function(tt->trains_,infra,infra::type_set({type::HALT,type::EOTD}),0);
+    test_check_function(tt->trains_,infra,infra::type_set({type::HALT,type::EOTD}),1);
+    test_check_function(tt->trains_,infra,infra::type_set({type::HALT,type::EOTD}),2);
+  }
   TEST_CASE("fix_intervals test"){
     auto const infra =
         utls::try_deserializing<infrastructure>("small_opts.raw", SMALL_OPTS);
@@ -701,6 +986,91 @@ TEST_SUITE("runtime suite") {
       std::cout<<pt.distance_<<" ";
       std::cout<<pt.v_max_<<std::endl;
     }
+  }
+  TEST_CASE("drive addition simple test"){
+    increase_time::train_drive drive;
+    if(!drive.phase_types_.empty()||!drive.phases_.empty()) throw std::logic_error("One of the vectors arent empty at the beginning");
+    if(!(drive.start_state_.dist_.is_zero()&&drive.start_state_.time_.is_zero()&&drive.start_state_.speed_.is_zero())) throw std::logic_error("state isnt initialited as zero");
+    train_state one_delta(si::time(1),si::length(1),si::speed(1));
+    train_state start_state;
+    auto end_accel = start_state+one_delta;
+    auto fake_acceleration = {start_state,end_accel};
+    one_delta.speed_ = si::speed::zero();
+    auto end_cruise = end_accel+one_delta;
+    auto fake_cruise= {end_accel,end_cruise};
+    one_delta.speed_ = si::speed(-1);
+    auto end_brake = end_cruise + one_delta;
+    auto fake_brake = {end_cruise,end_brake};
+    drive.push_back(fake_acceleration,increase_time::acceleration);
+    drive.push_back(fake_cruise,increase_time::cruising);
+    drive.push_back(fake_brake,increase_time::braking);
+    auto empty_drive = increase_time::train_drive::empty();
+    drive+=empty_drive;
+    CHECK_EQ(drive.phases_.size(),3);
+    CHECK_EQ(drive.phase_types_.size(),3);
+    increase_time::train_drive add_drive;
+    add_drive.push_back(fake_acceleration,increase_time::acceleration);
+    add_drive.push_back(fake_brake,increase_time::braking);
+    drive+=add_drive;
+    CHECK_EQ(drive.phases_.size(),5);
+    CHECK_EQ(drive.phase_types_.size(),5);
+    check_drive(drive,2);
+    add_drive.erase_elements(0,2);
+    add_drive.push_back({train_state::zero(),train_state::zero()},increase_time::braking);
+    drive+=add_drive;
+    CHECK_EQ(drive.phase_types_.size(),5);
+  }
+  TEST_CASE("check_AHD simple test"){
+    increase_time::train_drive drive;
+    train_state one_delta(si::time(1),si::length(1),si::speed(1));
+    train_state start_state;
+    start_state.speed_ = si::speed(1);
+    auto end_accel = start_state+one_delta;
+    auto fake_acceleration = {start_state,end_accel};
+    one_delta.speed_ = si::speed::zero();
+    auto end_cruise = end_accel+one_delta;
+    auto fake_cruise= {end_accel,end_cruise};
+    one_delta.speed_ = si::speed(-1);
+    auto end_brake = end_cruise + one_delta;
+    end_brake.time_ = si::time(2.5);
+    auto fake_brake = {end_cruise,end_brake};
+    drive.push_back(fake_acceleration,increase_time::acceleration);
+    drive.push_back(fake_cruise,increase_time::cruising);
+    drive.push_back(fake_brake,increase_time::braking);
+    tpe_point point(si::length(3),si::time(3),si::time::infinity(),si::speed::zero(),si::speed::infinity());
+    increase_time::set_pt(point);
+    bool result = increase_time::check_AHD(drive,0);
+    utl::verify(result,"AHD returned false when it shouldnt have");
+    CHECK_EQ(drive.phases_.size(),1);
+    CHECK_EQ(drive.phases_.size(),drive.phase_types_.size());
+    CHECK_EQ(drive.phase_types_.front(),increase_time::cruising);
+    CHECK_EQ(drive.phases_.front().size(),2);
+    auto state1 = drive.phases_.front().front();
+    auto state2 = drive.phases_.front().back();
+    CHECK_EQ(state1.speed_,state2.speed_);
+    CHECK_EQ(state2.speed_.val_,1);
+    CHECK_EQ(state2.dist_.val_,3);
+
+    drive.erase_elements(0,drive.phases_.size());
+    train_state mid_accel(si::time(0.5),si::length(0.5),si::speed(1.5));
+    end_cruise.dist_= si::length(4);
+    end_cruise.time_ = si::time(2);
+    train_state mid_brake(si::time(2.5),si::length(4.5),si::speed(1.5));
+    end_brake.dist_ = si::length(5);
+    end_brake.time_ = si::time(3);
+    point.e_time_ = si::time(3+(2.0/3.0));
+    increase_time::set_pt(point);
+    drive.push_back({start_state,mid_accel,end_accel},increase_time::acceleration);
+    drive.push_back({end_accel,end_cruise},increase_time::cruising);
+    drive.push_back({end_cruise,mid_brake,end_brake},increase_time::braking);
+    result = check_AHD(drive,0);
+    utls::sassert(result,"returned false even though it should be true");
+    CHECK_EQ(drive.phases_.size(),drive.phase_types_.size());
+    CHECK_EQ(drive.phases_.size(),3);
+    CHECK_EQ(drive.phase_types_,increase_time::types{increase_time::acceleration,increase_time::cruising,increase_time::braking});
+    CHECK_EQ(drive.phases_.front().size(),2);
+    CHECK_EQ(drive.phases_[1].size(),2);
+    CHECK_EQ(drive.phases_.back().size(),2);
   }
   TEST_CASE("pt test"){
     /*auto const infra =

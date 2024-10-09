@@ -74,6 +74,9 @@ struct interval_point {
 
   tt::sequence_point::optional_ptr sequence_point_;
 
+  //gives the distance of the sequence point iff it is present
+  //std::optional<si::length> sequence_point_dist_;
+
   // gives information about the last signal passed,
   // especially if it is located at this interval point
   std::optional<signal> last_signal_;

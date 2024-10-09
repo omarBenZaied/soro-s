@@ -8,17 +8,36 @@
 #include "interval.h"
 #pragma once
 namespace increase_time {
+using namespace soro;
 enum phase_type { acceleration, braking, cruising, invalid };
 
-using phases = soro::vector<soro::vector<soro::runtime::train_state>>;
-using types = soro::vector<phase_type>;
+using phases = vector<vector<runtime::train_state>>;
+using types = vector<phase_type>;
 
 struct train_drive {
+  static constexpr train_drive empty(){return {{},{}};}
+  void merge_phases(int const& offset);
+  void push_back(vector<runtime::train_state>const& phase,phase_type const& type);
+  void insert(int const& offset,phases const& new_phases,vector<phase_type> const& types);
+  void fix_times(int const& offset);
+  void fix_phases(int const& offset);
+  void fix_drive(int const& offset);
+  void erase_elements(int const& offset,
+                      int const& to_delete);
+  train_drive operator+=(train_drive const& other);
+
   phases phases_;
   types phase_types_;
-  void merge_phases(int const& offset);
+  soro::runtime::train_state start_state_;
 };
-using namespace soro;
+
+si::time get_cruise_time(si::speed const& speed, si::length const& start,
+                         si::length const& stop);
+si::time get_cruise_time(runtime::train_state const& start, runtime::train_state const& end);
+
+void set_pt(train_path_envelope::tpe_point const& point);
+
+void set_intervals(vector<runtime::interval_point> const& intr_points);
 
 void increase_time(train_drive& drive,
                    train_path_envelope::tpe_point const& point,

@@ -18,37 +18,41 @@ using namespace soro::rs;
 
 // uses a runge kutta 4th order method to numerically solve the
 // acceleration differential equation
-train_state accelerate4(train_state const init, si::length const stop_at,
+soro::vector<train_state> accelerate4(train_state const init, si::length const stop_at,
                         get_speed_limit const& get_speed_limit,
                         si::slope const slope, si::accel const deaccel,
                         rs::train_physics const& tp) {
-  train_state last;
+  soro::vector<train_state>states{init};
+  /*train_state last;
   train_state second_to_last;
 
-  last = init;
+  last = init;*/
 
   do {  // NOLINT
-    second_to_last = last;
+    //second_to_last = last;
 
     // delta_t is used as the step size h
-    last += rk4_step(last.speed_, delta_t, slope, tp);
-
+    //last += rk4_step(last.speed_, delta_t, slope, tp);
+    states.push_back(states.back() + rk4_step(states.back().speed_, delta_t, slope, tp));
     // check for:
     // 1. not going over the maximum given distance by stop_at
     // 2. not going backwards (i.e. speed < 0)
     // 3. not going over the given speed limit at the current distance
-  } while (last.dist_ < stop_at && last.speed_ > si::speed::zero() &&
-           last.speed_ < get_speed_limit(last.dist_));
-
-  utls::sassert(last.time_ > si::time::zero(), "negative time");
-  utls::sassert(last.speed_ > si::speed::zero(), "negative speed");
+  } while (states.back().dist_ < stop_at && states.back().speed_ > si::speed::zero() &&
+           states.back().speed_ < get_speed_limit(states.back().dist_));
+  auto& last = states.back();
+  auto& second_to_last = states[states.size()-2];
+  utls::sassert(states.back().time_ > si::time::zero(), "negative time");
+  utls::sassert(states.back().speed_ > si::speed::zero(), "negative speed");
 
   train_state result;
+  bool result_changed = false;
 
   auto const quit_due_to_dist = last.dist_ >= stop_at;
   if (quit_due_to_dist) {
     result = detail::get_intersection_at_max_dist(stop_at, second_to_last, last,
                                                   slope, tp);
+    result_changed = true;
   }
 
   auto const quit_due_to_speed =
@@ -60,8 +64,9 @@ train_state accelerate4(train_state const init, si::length const stop_at,
 
     if (quit_due_to_dist) result.dist_ = stop_at;
     result.speed_ = get_speed_limit(result.dist_);
+    result_changed = true;
   }
-
+  if(result_changed) states[states.size()-1] = result;
   utls::sassert(quit_due_to_dist || quit_due_to_speed,
                 "quit either due to speed or dist");
 
@@ -71,11 +76,11 @@ train_state accelerate4(train_state const init, si::length const stop_at,
 
   utls::sassert(result.dist_ <= stop_at, "too far");
   utls::sassert(result.speed_ <= get_speed_limit(result.dist_), " too fast");
-
-  return result;
+  utls::sassert(!result_changed||(result.dist_>second_to_last.dist_&&result.speed_>second_to_last.speed_),"Result is slower or before second to last");
+  return states;
 }
 
-train_state accelerate_without_braking_curve(
+soro::vector<train_state> accelerate_without_braking_curve(
     si::speed const initial_speed, si::length const stop_at,
     get_speed_limit const& get_speed_limit, si::slope const slope,
     si::accel const deaccel, rs::train_physics const& tp) {
@@ -91,11 +96,11 @@ train_state accelerate_without_braking_curve(
 
   auto const result =
       accelerate4(state, stop_at, get_speed_limit, slope, deaccel, tp);
-
+  utls::sassert(result.front().dist_.is_zero(),"states doesnt start with distance of zero");
   return result;
 }
 
-train_state accelerate_with_braking_curve(
+soro::vector<train_state> accelerate_with_braking_curve(
     si::speed const initial_speed, si::length const stop_at,
     get_speed_limit const& get_speed_limit, si::slope const slope,
     si::accel const deaccel, rs::train_physics const& tp) {
@@ -112,25 +117,33 @@ train_state accelerate_with_braking_curve(
     return accelerate_without_braking_curve(
         initial_speed, stop_at, get_speed_limit, slope, deaccel, tp);
   }
-
+  soro::vector<train_state> accel_states;
   if (!braking_point.is_zero()) {
-    state =
+    accel_states =
         accelerate4(state, braking_point, get_speed_limit, slope, deaccel, tp);
+    state = accel_states.back();
   }
 
   // we can accelerate further, even after the braking point
   if (state.dist_ == braking_point &&
       state.speed_ < get_speed_limit(braking_point)) {
-    state = accelerate4(state, stop_at, get_speed_limit, slope, deaccel, tp);
+    auto new_accel_states = accelerate4(state, stop_at, get_speed_limit, slope, deaccel, tp);
+    std::cout << accel_states.size() << std::endl;
+    accel_states.insert(accel_states.end(),new_accel_states.begin()+(accel_states.empty()?0:1),new_accel_states.end());
   }
-
-  return state;
+  utls::sassert(accel_states.front().dist_.is_zero(),"states doesnt start with distance of zero");
+  return accel_states;
 }
 
-
+train_state accelerate(si::speed const initial_speed, si::speed const max_speed,
+                       si::speed const target_speed, si::length max_dist,
+                       si::accel const deaccel, si::slope const slope,
+                       si::length const stop_at, rs::train_physics const& tp){
+  return accelerate_with_states(initial_speed,max_speed,target_speed,max_dist,deaccel,slope,stop_at,tp).back();
+}
 // uses a runge kutta 4th order method to numerically solve the
 // acceleration differential equation
-train_state accelerate(si::speed const initial_speed, si::speed const max_speed,
+soro::vector<train_state> accelerate_with_states(si::speed const initial_speed, si::speed const max_speed,
                        si::speed const target_speed, si::length max_dist,
                        si::accel const deaccel, si::slope const slope,
                        si::length const stop_at, rs::train_physics const& tp) {
@@ -152,10 +165,10 @@ train_state accelerate(si::speed const initial_speed, si::speed const max_speed,
           : accelerate_without_braking_curve(
                 initial_speed, stop_at, get_speed_limit, slope, deaccel, tp);
 
-  utls::sassert(result.time_ >= si::time::zero(), "negative time");
-  utls::sassert(result.speed_ > si::speed::zero(), "negative speed");
-  utls::sassert(result.speed_ <= max_speed, "speed exceeds max speed");
-  utls::sassert(result.dist_ != max_dist || result.speed_ <= target_speed,
+  utls::sassert(result.back().time_ >= si::time::zero(), "negative time");
+  utls::sassert(result.back().speed_ > si::speed::zero(), "negative speed");
+  utls::sassert(result.back().speed_ <= max_speed, "speed exceeds max speed");
+  utls::sassert(result.back().dist_ != max_dist || result.back().speed_ <= target_speed,
                 "speed must be less than target speed at max distance");
 
   return result;

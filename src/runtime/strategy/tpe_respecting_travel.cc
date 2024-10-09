@@ -46,6 +46,11 @@ intervals split_intervals(intervals const& intervals, tpe_points const& pts,rs::
       (it-1)->records_.erase(records_it,(it-1)->records_.end());
       new_point.distance_ = point.distance_;
       new_point.records_ = records_to_move;
+      new_point.sequence_point_.reset();
+      if(intr_point.next_signal_.has_value()&&intr_point.next_signal_.value().dist_<=point.distance_){
+        new_point.last_signal_ = intr_point.next_signal_;
+        new_point.next_signal_ = it->next_signal_;
+      }
       intr_points.insert(it, new_point);
       it = intr_points.begin()+(++it_offset);
     }

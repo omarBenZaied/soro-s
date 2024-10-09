@@ -211,7 +211,15 @@ si::accel get_braking_deaccel(interval const& interval,
                             interval.brake_path_length());
 }
 
-delta shortest_travel_time::drive(train_state const& initial, train_safety*,
+delta shortest_travel_time::drive(train_state const& initial, train_safety* train_safety,
+            interval const& interval, tt::train const& train,
+            tt::train::trip const& trip, signal_time const& signal_time){
+  delta result;
+  std::tie(result,std::ignore) = create_drive(initial,train_safety,interval,train,trip,signal_time);
+  return result;
+}
+
+std::tuple<delta,increase_time::train_drive> shortest_travel_time::create_drive(train_state const& initial, train_safety*,
                                   interval const& interval, train const& train,
                                   train::trip const& trip,
                                   signal_time const& signal_time) {
@@ -219,7 +227,7 @@ delta shortest_travel_time::drive(train_state const& initial, train_safety*,
   if (interval.length().is_zero()) {
     auto result = delta::zero();
     result.events_ = get_events(initial, {}, interval, train.physics_);
-    return result;
+    return {result,increase_time::train_drive::empty()};
   }
 
   auto const& tp = train.physics_;
@@ -227,6 +235,7 @@ delta shortest_travel_time::drive(train_state const& initial, train_safety*,
   commands commands;
 
   // all train states are initialized to zero
+  soro::vector<train_state> accel_states;
   train_state accel;
   train_state cruise;
   train_state brake;
@@ -245,14 +254,16 @@ delta shortest_travel_time::drive(train_state const& initial, train_safety*,
   auto const cannot_cruise = init_tractive < init_resistive;
   auto const should_accel = not_at_max_speed || cannot_cruise;
   if (should_accel) {
-    accel =
-        accelerate(initial.speed_, max_speed, target_speed, interval.length(),
+    //std::cout<<"should accel"<<std::endl;
+    accel_states =
+        accelerate_with_states(initial.speed_, max_speed, target_speed, interval.length(),
                    deaccel, interval.slope(), interval.length(), tp);
+    accel = accel_states.back();
   }
-
   auto const brake_from = should_accel ? accel.speed_ : max_speed;
   auto const should_brake = brake_from > target_speed;
   if (should_brake) {
+    //std::cout<<"should brake"<<std::endl;
     brake = rk4::brake(brake_from, target_speed, deaccel);
   }
 
@@ -263,22 +274,33 @@ delta shortest_travel_time::drive(train_state const& initial, train_safety*,
 
   auto const cruise_force = tractive > resistive;
   auto const cruise_length = interval.length() - accel.dist_ - brake.dist_;
-  auto const can_cruise = cruise_force && cruise_length > si::length::zero();
+  auto const can_cruise = cruise_force && cruise_length > si::length(FP_PRECISION<double>);
   auto const should_cruise = can_cruise && current_speed == max_speed;
   if (should_cruise) {
+    //std::cout<<"should cruise"<<std::endl;
     cruise = rk4::cruise(max_speed, cruise_length);
   }
 
+  increase_time::train_drive drive;
+
   if (should_accel) {
     commands.emplace_back(command::action::accelerate, accel);
+    if(cannot_cruise) std::cout<<"Cant cruise"<<std::endl;
+    drive.push_back(accel_states,cannot_cruise?increase_time::braking:increase_time::acceleration);
   }
 
   if (should_cruise) {
     commands.emplace_back(command::action::cruise, cruise);
+    auto cruise_speed = (should_accel?accel:initial).speed_;
+    train_state start_cruise(si::time::zero(),si::length::zero(),cruise_speed);
+    drive.push_back({start_cruise,cruise},increase_time::cruising);
   }
 
   if (should_brake) {
     commands.emplace_back(command::action::brake, brake);
+    auto& brake_start_speed = (should_cruise?cruise:should_accel?accel:initial).speed_;
+    train_state brake_start(si::time::zero(),si::length::zero(),brake_start_speed);
+    drive.push_back({brake_start,brake},increase_time::braking);
   }
   utls::ensure(!commands.empty(), "no commands generated");
   utls::ensure(commands.size() < 4, "too many commands generated");
@@ -286,6 +308,7 @@ delta shortest_travel_time::drive(train_state const& initial, train_safety*,
   auto const new_speed = should_brake
                              ? brake.speed_
                              : (should_cruise ? cruise.speed_ : accel.speed_);
+
   delta result;
   result.time_ = accel.time_ + cruise.time_ + brake.time_;
   result.dist_ = accel.dist_ + cruise.dist_ + brake.dist_;
@@ -298,7 +321,7 @@ delta shortest_travel_time::drive(train_state const& initial, train_safety*,
   utls::ensure(result.events_.size() == interval.records().size(),
                "must have an event for each record");
 
-  return result;
+  return {result,drive};
 }
 
 }  // namespace soro::runtime
