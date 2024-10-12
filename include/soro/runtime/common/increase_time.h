@@ -24,7 +24,8 @@ struct train_drive {
   void fix_drive(int const& offset);
   void erase_elements(int const& offset,
                       int const& to_delete);
-  train_drive operator+=(train_drive const& other);
+  train_drive& operator+=(train_drive const& other);
+  void print();
 
   phases phases_;
   types phase_types_;
@@ -56,15 +57,17 @@ bool check_HDH(train_drive& drive, rs::train_physics const& tp,
 bool check_DHA(train_drive& drive, rs::train_physics const& tp,
                int const& offset);
 
-bool check_HA(train_drive& drive);
+bool check_HA(train_drive& drive,rs::train_physics const& tp);
 
-bool check_DH(train_drive& drive);
+//bool check_DH(train_drive& drive);
 
-bool check_DA(train_drive& drive);
+bool check_DA(train_drive& drive,rs::train_physics const& tp);
 
-bool check_A(train_drive& drive);
+/*bool check_A(train_drive& drive);
 
 bool check_H(train_drive& drive);
 
-bool check_D(train_drive& drive);
+bool check_D(train_drive& drive);*/
+
+bool slowest_drive(train_drive& drive,int const& cruise_index,rs::train_physics const& tp);
 }// namespace increase_time

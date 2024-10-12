@@ -268,26 +268,28 @@ soro::vector<interval_point> fix_intervals(interval& interval,tpe_point const& p
   return new_intervals;
 }
 
-train_state get_end_state(train_state current_state,tpe_point const& pt, interval& interval,
+std::tuple<train_state,increase_time::train_drive> get_end_state(train_state current_state,tpe_point const& pt, interval& interval,
                     train_safety* train_safety,soro::tt::train const& train,soro::tt::train::trip const& trip){
   signal_time signal_time;
   signal_time.time_ = ZERO<absolute_time>;
   shortest_travel_time shortest_travel_time;
+  increase_time::train_drive drive;
+  drive.start_state_ = current_state;
   auto new_intervals = fix_intervals(interval,pt,train.physics_);
   struct interval fixed_interval = {new_intervals.data(),new_intervals.data()+1};
   while(current_state.dist_<pt.distance_){
-    current_state += shortest_travel_time.drive(
-        current_state, train_safety, fixed_interval, train, trip, signal_time);
+    auto [delta,delta_drive] = shortest_travel_time.create_drive(current_state, train_safety, fixed_interval, train, trip, signal_time);
+    current_state+=delta;
+    drive+=delta_drive;
     current_state.dist_ = fixed_interval.end_distance();
-    //++interval;
+    if(!drive.phases_.empty())drive.phases_.back().back().dist_ = fixed_interval.end_distance();
     ++fixed_interval;
-    //utl::verify
-    utls::sassert(
+    utl::verify(
         current_state.time_ <= pt.l_time_,
         "TPE-Point at distance {} with latest time {} can't be achieved",
         pt.distance_, pt.l_time_);
   }
-  return current_state;
+  return {current_state,drive};
 }
 soro::vector<train_state> tpe_respecting_simulation(
     tpe_points& tpe_points, train_state const& initial, train_safety* train_safety,
@@ -308,8 +310,9 @@ soro::vector<train_state> tpe_respecting_simulation(
   //fix_tpe_speeds(tpe_points,interval,train.physics_,initial);
   auto current_state = initial;
   for (int i = 1; i < tpe_points.size() ; ++i) {
-    auto end_point = tpe_points[i];
-    current_state = get_end_state(current_state,end_point,interval,train_safety,train,trip);
+    auto const& end_point = tpe_points[i];
+    increase_time::train_drive drive;
+    std::tie(current_state,drive) = get_end_state(current_state,end_point,interval,train_safety,train,trip);
     utls::sassert(current_state.dist_==end_point.distance_,"Distance of current_state isnt equal to distance of tpe_point. I dont know how that happened, but it sure did.");
     //das ist ein interessanter fall der nur auftreten kann zwischen dem initialzustand und dem ersten tpe-punkt
     if(current_state.speed_<end_point.v_min_) throw std::logic_error("Minimum speed of "+std::to_string(end_point.v_min_.val_)+" at distance "+std::to_string(end_point.distance_.val_)+" cant be driven");
