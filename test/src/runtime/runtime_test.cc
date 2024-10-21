@@ -379,14 +379,20 @@ TEST_SUITE("runtime suite") {
   void check_drive(increase_time::train_drive const& drive,int const& offset){
     if(offset>=drive.phases_.size()) return;
     auto unique_it = std::adjacent_find(drive.phase_types_.begin()+offset,drive.phase_types_.end());
-    if(unique_it!=drive.phase_types_.end()) utl::fail("2 neighboring phases {} at offsets {} and {}",*unique_it,unique_it-drive.phase_types_.begin(),unique_it-drive.phase_types_.begin()+1);
+    if(unique_it!=drive.phase_types_.end()) throw utl::fail("2 neighboring phases {} at offsets {} and {}",*unique_it,unique_it-drive.phase_types_.begin(),unique_it-drive.phase_types_.begin()+1);
     train_state predecessor;
     for(int i=offset;i<drive.phases_.size();++i){
       if(!std::is_sorted(drive.phases_[i].begin(),drive.phases_[i].end(),[](train_state const& st1,train_state const& st2){return st1.dist_<st2.dist_;})){
-        utl::fail("states arent ordered in distance");
+        throw utl::fail("states arent ordered in distance");
       }
       if(drive.phases_[i].end()!=std::adjacent_find(drive.phases_[i].begin(),drive.phases_[i].end(),[](train_state const& st1,train_state const& st2){return st1.dist_==st2.dist_;})){
-        utl::fail("states with same distance");
+        throw utl::fail("states with same distance");
+      }
+      if(!std::is_sorted(drive.phases_[i].begin(),drive.phases_[i].end(),[](train_state const& st1,train_state const& st2){return st1.time_<st2.time_;})){
+        throw utl::fail("states arent ordered in time");
+      }
+      if(drive.phases_[i].end()!=std::adjacent_find(drive.phases_[i].begin(),drive.phases_[i].end(),[](train_state const& st1,train_state const& st2){return st1.time_==st2.time_;})){
+        throw utl::fail("states with same time");
       }
       predecessor = offset>0?drive.phases_[offset-1].back():drive.start_state_;
       CHECK_EQ(drive.phases_[offset].front().dist_,predecessor.dist_);

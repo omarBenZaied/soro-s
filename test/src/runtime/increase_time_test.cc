@@ -2,12 +2,10 @@
 
 #include <ranges>
 
-#include "utl/logging.h"
 #include "utl/parallel_for.h"
 
 #include "soro/utls/cumulative_timer.h"
 #include "soro/utls/print_progress.h"
-#include "soro/utls/std_wrapper/contains.h"
 #include "soro/utls/std_wrapper/count_if.h"
 #include "soro/utls/std_wrapper/any_of.h"
 
@@ -15,7 +13,6 @@
 
 #include "soro/timetable/timetable.h"
 
-#include "soro/runtime/common/use_surcharge.h"
 #include "soro/runtime/euler_runtime.h"
 #include "soro/runtime/rk4_runtime.h"
 
@@ -24,10 +21,11 @@
 #include "soro/runtime/common/get_intervals.h"
 #include "soro/runtime/common/get_next_offset.h"
 #include "soro/runtime/common/increase_time.h"
+
 #include "soro/runtime/common/tpe_respecting_travel.h"
 #include "soro/runtime/common/train_path_envelope.h"
 #include "soro/runtime/physics/rk4/brake.h"
-#include "soro/runtime/physics/rk4/detail/get_speed_limit.h"
+#include "test/tpe_runtime/tpe_arrival_factor.h"
 #include "test/tpe_runtime/tpe_simulation_utls.h"
 namespace increase_time_test{
 using namespace soro;
@@ -36,6 +34,27 @@ using namespace increase_time;
 using namespace soro::tpe_simulation;
 using namespace soro::test;
 TEST_SUITE("increase_time suite"){
+
+  bool should_throw(train_drive const& drive,vector<interval_point> interval_points,
+      rs::train_physics const& tp,tpe_point const& pt) {
+    auto state = drive.phases_.front().front();
+    auto it = utls::find_if(interval_points,[state](interval_point const& p){return p.distance_==state.dist_;});
+    CHECK(it != interval_points.end());
+    interval interval(&*it,&*(it+1));
+    auto end_dist = drive.phases_.back().back().dist_;
+    while(state.dist_!=end_dist&&state.speed_.is_positive()) {
+      if(interval.length().is_zero()) {
+        ++interval;
+        continue;
+      }
+      auto deaccel = tp.braking_deaccel(interval.infra_limit(),interval.bwp_limit(),interval.brake_path_length());
+      auto delta = rk4::brake_over_distance(state.speed_,deaccel,interval.length());
+      state+=delta;
+      state.speed_ = delta.speed_;
+      ++interval;
+    }
+    return state.speed_.is_positive()&&state.time_<pt.e_time_;
+  }
   void check_increase_time(vector<tt::train> const& trains,infra::infrastructure const& infra,infra::type_set const& record_types){
     for(auto const& t:trains){
       auto tpe_points = get_tpe_points(t,infra,record_types);
@@ -45,7 +64,6 @@ TEST_SUITE("increase_time suite"){
       current.speed_ = t.start_speed_;
       current.time_ = si::time(t.start_time_.count());
       tt::train::trip const trip(tt::train::trip::id{0}, t.id_, ZERO<absolute_time>);
-      double const ARRIVAL_FACTOR = 1.1;
       bool actually_tested = false;
       auto interval = intervals.begin();
       for(auto& tpe_point :tpe_points){
@@ -53,13 +71,17 @@ TEST_SUITE("increase_time suite"){
         tpe_point.l_time_ = std::max(tpe_point.l_time_,tpe_point.e_time_);
         train_drive drive;
         std::tie(current,drive) = get_end_state(current,tpe_point,interval,nullptr,t,trip);
-        if(drive.phase_types_.size()>=3) {
+        if(drive.phase_types_.size()>=2) {
           actually_tested = true;
-          increase_time::increase_time(drive, tpe_point, t.physics_,
-                                         intervals.p_, standard_next_offset);
-          CHECK_GE(drive.phases_.back().back().time_, tpe_point.e_time_);
-          check_drive(drive, 0);
-          check_drivable(drive, intervals.p_, t, 0);
+          if(should_throw(drive,intervals.p_,t.physics_,tpe_point)) CHECK_THROWS(increase_time::increase_time(drive, tpe_point, t.physics_,
+                                          intervals.p_, standard_next_offset));
+          else {
+            CHECK_NOTHROW(increase_time::increase_time(drive, tpe_point, t.physics_,
+                                          intervals.p_, standard_next_offset));
+            CHECK_GE(drive.phases_.back().back().time_, tpe_point.e_time_);
+            check_drive(drive, 0);
+            check_drivable(drive, intervals.p_, t, 0);
+          }
         }
         drive.erase_elements(0,drive.phases_.size());
         drive.start_state_ = current;
@@ -82,7 +104,7 @@ TEST_SUITE("increase_time suite"){
     tt::timetable const tt(FOLLOW_OPTS, infra);
     check_increase_time(tt->trains_,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}));
   }
-  TEST_CASE("increase_time cross"){
+  TEST_CASE("increase_time cross") {
     auto const infra =
         utls::try_deserializing<infra::infrastructure>("small_opts.raw", SMALL_OPTS);
     auto const tt =

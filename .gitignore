@@ -2,6 +2,7 @@
 /.idea
 /*build*
 /deps
+/deps/range-v3
 /.clang-tidy
 *.zip
 *.tar.gz

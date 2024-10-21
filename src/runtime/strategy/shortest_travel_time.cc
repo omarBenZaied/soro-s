@@ -254,7 +254,6 @@ std::tuple<delta,increase_time::train_drive> shortest_travel_time::create_drive(
   auto const cannot_cruise = init_tractive < init_resistive;
   auto const should_accel = not_at_max_speed || cannot_cruise;
   if (should_accel) {
-    //std::cout<<"should accel"<<std::endl;
     accel_states =
         accelerate_with_states(initial.speed_, max_speed, target_speed, interval.length(),
                    deaccel, interval.slope(), interval.length(), tp);
@@ -263,7 +262,6 @@ std::tuple<delta,increase_time::train_drive> shortest_travel_time::create_drive(
   auto const brake_from = should_accel ? accel.speed_ : max_speed;
   auto const should_brake = brake_from > target_speed;
   if (should_brake) {
-    //std::cout<<"should brake"<<std::endl;
     brake = rk4::brake(brake_from, target_speed, deaccel);
   }
 
@@ -277,7 +275,6 @@ std::tuple<delta,increase_time::train_drive> shortest_travel_time::create_drive(
   auto const can_cruise = cruise_force && cruise_length > si::length(FP_PRECISION<double>);
   auto const should_cruise = can_cruise && current_speed == max_speed;
   if (should_cruise) {
-    //std::cout<<"should cruise"<<std::endl;
     cruise = rk4::cruise(max_speed, cruise_length);
   }
 

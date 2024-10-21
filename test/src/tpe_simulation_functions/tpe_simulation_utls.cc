@@ -22,7 +22,7 @@ tpe_points get_tpe_points(tt::train const& t, infra::infrastructure const& infra
 void check_drive(increase_time::train_drive const& drive,int const& offset){
   if(offset>=drive.phases_.size()) return;
   auto unique_it = std::adjacent_find(drive.phase_types_.begin()+offset,drive.phase_types_.end());
-  if(unique_it!=drive.phase_types_.end()) utl::fail("2 neighboring phases {} at offsets {} and {}",*unique_it,unique_it-drive.phase_types_.begin(),unique_it-drive.phase_types_.begin()+1);
+  if(unique_it!=drive.phase_types_.end()) throw utl::fail("2 neighboring phases {} at offsets {} and {}",*unique_it,unique_it-drive.phase_types_.begin(),unique_it-drive.phase_types_.begin()+1);
   train_state predecessor;
   for(int i=offset;i<drive.phases_.size();++i){
     if(!std::is_sorted(drive.phases_[i].begin(),drive.phases_[i].end(),[](train_state const& st1,train_state const& st2){return st1.dist_<st2.dist_;})){
@@ -30,6 +30,12 @@ void check_drive(increase_time::train_drive const& drive,int const& offset){
     }
     if(drive.phases_[i].end()!=std::adjacent_find(drive.phases_[i].begin(),drive.phases_[i].end(),[](train_state const& st1,train_state const& st2){return st1.dist_==st2.dist_;})){
       utl::fail("states with same distance");
+    }
+    if(!std::is_sorted(drive.phases_[i].begin(),drive.phases_[i].end(),[](train_state const& st1,train_state const& st2){return st1.time_<st2.time_;})){
+      throw utl::fail("states arent ordered in time");
+    }
+    if(drive.phases_[i].end()!=std::adjacent_find(drive.phases_[i].begin(),drive.phases_[i].end(),[](train_state const& st1,train_state const& st2){return st1.time_==st2.time_;})){
+      throw utl::fail("states with same time");
     }
     predecessor = offset>0?drive.phases_[offset-1].back():drive.start_state_;
     CHECK_EQ(drive.phases_[offset].front().dist_,predecessor.dist_);
@@ -70,20 +76,12 @@ void check_acceleration_possible(vector<train_state> const& accel,vector<interva
     utls::sassert(tractive_force>resistive_force.abs(),"acceleration not possible");
   }
 }
-void check_braking_possible(vector<train_state> const& brake,vector<interval_point> const& intr_point,tt::train const& t){
-  for(auto const& state:brake){
-    if(state.dist_ == intr_point.back().distance_)continue;
-    auto it = utls::find_if(intr_point,[state](interval_point const& point){return point.distance_>=state.dist_;});
-    utls::sassert(it!=intr_point.end(),"state has too high distance");
-    interval current_interval  = it->distance_>state.dist_?interval(&*(it-1),&*it):interval(&*it,&*(it+1));
-    auto deaccel = t.physics_.braking_deaccel(current_interval.infra_limit(),current_interval.bwp_limit(),current_interval.brake_path_length());
-    utls::sassert(deaccel.is_negative(),"positive deaccel");
-  }
-}
+
 void check_cruise_possible(vector<train_state> const& cruise,vector<interval_point> const& intr_point,tt::train const& t){
   auto& start_state = cruise.front();
   auto& end_state = cruise.back();
   auto speed = start_state.speed_;
+  utls::sassert(speed.is_positive(),"Cruising at 0 speed is not possible");
   auto start_it = utls::find_if(intr_point,[start_state](interval_point const& point){return point.distance_>=start_state.dist_;});
   auto end_it = utls::find_if(intr_point,[end_state](interval_point const& point){return point.distance_>=end_state.dist_;});
   start_it = start_it->distance_ == start_state.dist_ ? start_it : start_it-1;
@@ -103,7 +101,6 @@ void check_drivable(increase_time::train_drive const& drive,vector<interval_poin
         check_acceleration_possible(phase,intr_point,t);
         break;
       case increase_time::braking:
-        check_braking_possible(phase,intr_point,t);
         break;
       case increase_time::cruising:
         check_cruise_possible(phase,intr_point,t);

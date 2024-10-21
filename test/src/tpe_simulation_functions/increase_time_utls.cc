@@ -7,11 +7,14 @@
 #include "soro/runtime/common/signal_time.h"
 #include "soro/runtime/common/tpe_respecting_travel.h"
 #include "test/tpe_runtime/tpe_simulation_utls.h"
+#include "test/tpe_runtime/tpe_arrival_factor.h"
+#include "soro/runtime/physics/rk4/brake.h"
 namespace increase_time{
 using namespace soro;
 using namespace soro::runtime;
 using namespace soro::train_path_envelope;
 using namespace tpe_simulation;
+using Test_function = void(train_drive&,tpe_point const&,vector<interval_point> const&,tt::train const&);
 int next_index(train_drive const& drive,int const& start_index,phase_checker const& checker){
   if(drive.phases_.empty()) return -1;
   for(int i=start_index;i<drive.phases_.size()-1;++i){
@@ -22,12 +25,12 @@ int next_index(train_drive const& drive,int const& start_index,phase_checker con
   }
   return -1;
 }
-void AHD_check(increase_time::train_drive& drive,tpe_point const& point,vector<interval_point> const& intr_points,tt::train const& t){
+void AHD_check(train_drive& drive,tpe_point const& point,vector<interval_point> const& intr_points,tt::train const& t){
   if(drive.phases_.empty()) return;
-  increase_time::set_pt(point);
+  set_pt(point);
   int index = next_index(drive,0,increase_time::AHD_checker);
   while(index!=-1){
-    bool finished = increase_time::check_AHD(drive,index);
+    bool finished = check_AHD(drive,index);
     CHECK_GE(drive.phases_.size(),1);
     check_drive(drive,0);
     utl::verify(finished==(drive.phases_.back().back().time_>=point.e_time_),"check_AHD returned wrong result {}",finished);
@@ -50,13 +53,13 @@ void AHA_check(train_drive& drive,tpe_point const& point,vector<interval_point> 
     index=next_index(drive,0,AHA_checker);
   }
 }
-void HDH_check(increase_time::train_drive& drive,tpe_point const& point,vector<interval_point> const& intr_points,tt::train const& t){
+void HDH_check(train_drive& drive,tpe_point const& point,vector<interval_point> const& intr_points,tt::train const& t){
   if(drive.phases_.empty()) return;
   set_pt(point);
   set_intervals(intr_points);
   int index = next_index(drive,0,HDH_checker);
   while(index!=-1){
-    bool finished = increase_time::check_HDH(drive,t.physics_,index);
+    bool finished = check_HDH(drive,t.physics_,index);
     check_drive(drive,index);
     utl::verify(finished==(drive.phases_.back().back().time_>=point.e_time_),"check_AHA returned wrong result {}",finished);
     check_drivable(drive,intr_points,t,index);
@@ -64,7 +67,7 @@ void HDH_check(increase_time::train_drive& drive,tpe_point const& point,vector<i
     index=next_index(drive,0,increase_time::HDH_checker);
   }
 }
-void DA_check(increase_time::train_drive& drive,vector<interval_point> const& intr_points,tt::train const& t) {
+void DA_check(train_drive& drive,tpe_point const&,vector<interval_point> const& intr_points,tt::train const& t) {
   if(drive.phases_.empty()) return;
   int index  = next_index(drive,0,DA_checker);
   if(index==-1) return;
@@ -73,7 +76,7 @@ void DA_check(increase_time::train_drive& drive,vector<interval_point> const& in
   auto size = drive.phases_.size();
   drive.erase_elements(2,size-2);
   auto state = drive.phases_.back().back();
-  tpe_point point(state.dist_,state.time_*1.1,state.time_*1.1,si::speed::zero(),si::speed::infinity());
+  tpe_point point(state.dist_,state.time_*ARRIVAL_FACTOR,state.time_*ARRIVAL_FACTOR,si::speed::zero(),si::speed::infinity());
   set_pt(point);
   set_intervals(intr_points);
   bool finished = check_DA(drive, t.physics_);
@@ -83,7 +86,7 @@ void DA_check(increase_time::train_drive& drive,vector<interval_point> const& in
   check_drivable(drive, intr_points, t, 0);
 }
 
-void HA_check(increase_time::train_drive& drive,vector<interval_point> const& intr_points,tt::train const& t){
+void HA_check(train_drive& drive,tpe_point const&,vector<interval_point> const& intr_points,tt::train const& t){
   int index = next_index(drive,0,HA_checker);
   while(index!=-1){
     std::cout<<"HA tested"<<std::endl;
@@ -94,7 +97,7 @@ void HA_check(increase_time::train_drive& drive,vector<interval_point> const& in
     copy_drive.phase_types_.insert(copy_drive.phase_types_.begin(),type_it,type_it+2);
     copy_drive.start_state_ = copy_drive.phases_.front().front();
     auto state = copy_drive.phases_.back().back();
-    tpe_point point(state.dist_,state.time_*1.1,state.time_*1.1,si::speed::zero(),si::speed::infinity());
+    tpe_point point(state.dist_,state.time_*ARRIVAL_FACTOR,state.time_*ARRIVAL_FACTOR,si::speed::zero(),si::speed::infinity());
     set_pt(point);
     set_intervals(intr_points);
     bool finished = check_HA(copy_drive,t.physics_);
@@ -105,20 +108,113 @@ void HA_check(increase_time::train_drive& drive,vector<interval_point> const& in
   }
 }
 
-void test_check_function(soro::vector<tt::train> const& trains,infra::infrastructure const& infra,infra::type_set const& record_types,int function_to_use) {
+void DH_check(train_drive& drive,tpe_point const&,vector<interval_point> const& intr_points,tt::train const& t) {
+  int index = next_index(drive,0,DH_checker);
+  while(index!=-1) {
+    std::cout<<"DH tested"<<std::endl;
+    train_drive copy_drive;
+    copy_drive.push_back(drive.phases_[index],braking);
+    copy_drive.push_back(drive.phases_[index+1],cruising);
+    copy_drive.start_state_ = copy_drive.phases_.front().front();
+    auto state = copy_drive.phases_.back().back();
+    tpe_point point(state.dist_,state.time_*ARRIVAL_FACTOR,si::time::infinity(),si::speed::zero(),si::speed::infinity());
+    set_pt(point);
+    set_intervals(intr_points);
+    bool threw = false;
+    bool finished = false;
+    try {
+      finished = check_DH(copy_drive,t.physics_);
+    }
+    catch(std::logic_error const&) {
+      threw = true;
+      auto start_state = copy_drive.phases_.front().back();
+      auto start_point = std::find_if(intr_points.begin(),intr_points.end(),
+        [start_state](interval_point const& p){return p.distance_>start_state.dist_;});
+      interval interval(&*(start_point-1),&*start_point);
+      while(start_state.dist_!=point.distance_) {
+        if(interval.length().is_zero()) {
+          ++interval;
+          continue;
+        }
+        auto deaccel = t.physics_.braking_deaccel(interval.infra_limit(),interval.bwp_limit(),interval.brake_path_length());
+        auto delta = rk4::brake_over_distance(start_state.speed_,
+          deaccel,interval.length()-start_state.dist_+interval.start_distance());
+        start_state+=delta;
+        start_state.speed_ = delta.speed_;
+        ++interval;
+      }
+      utls::sassert(start_state.speed_>=point.v_min_&&start_state.time_<point.e_time_,"check_DH threw when it shouldnt have");
+    }
+    catch (std::runtime_error const&) {threw = true;}
+    if(!threw) {
+      check_drive(copy_drive,0);
+      utl::verify(finished==copy_drive.phases_.back().back().time_>=point.e_time_,"check_H returned wrong result {}",finished);
+      check_drivable(copy_drive,intr_points,t,0);
+    }
+    index = next_index(drive,index+1,DH_checker);
+  }
+}
+
+void H_check(train_drive& drive,tpe_point const&,vector<interval_point> const& intr_points,tt::train const& t) {
+  auto it = std::find(drive.phase_types_.begin(),drive.phase_types_.end(),cruising);
+  while(it!=drive.phase_types_.end()) {
+    std::cout<<"H tested"<<std::endl;
+    train_drive copy_drive;
+    auto phase = *(drive.phases_.begin()+(it-drive.phase_types_.begin()));
+    copy_drive.push_back(phase,cruising);
+    copy_drive.start_state_ = phase.front();
+    auto e_time = phase.back().time_*ARRIVAL_FACTOR;
+    tpe_point point(phase.back().dist_,e_time,si::time::infinity(),si::speed::zero(),si::speed::infinity());
+    set_pt(point);
+    set_intervals(intr_points);
+    bool finished = false;
+    bool threw = false;
+    try {
+      finished = check_H(copy_drive,t.physics_);
+    }
+    catch(std::logic_error const&) {
+      threw = true;
+      auto start_state = copy_drive.phases_.front().front();
+      auto start_point = std::find_if(intr_points.begin(),intr_points.end(),
+        [start_state](interval_point const& p){return p.distance_>start_state.dist_;});
+      interval interval(&*(start_point-1),&*start_point);
+      while(start_state.dist_!=point.distance_) {
+        if(interval.length().is_zero()) {
+          ++interval;
+          continue;
+        }
+        auto deaccel = t.physics_.braking_deaccel(interval.infra_limit(),interval.bwp_limit(),interval.brake_path_length());
+        auto delta = rk4::brake_over_distance(start_state.speed_,
+          deaccel,interval.length()-start_state.dist_+interval.start_distance());
+        start_state+=delta;
+        start_state.speed_ = delta.speed_;
+        ++interval;
+      }
+      utls::sassert(start_state.speed_>=point.v_min_&&start_state.time_<point.e_time_,"check_H threw when it shouldnt have");
+    }
+    catch (std::runtime_error const&) {threw = true;}
+    if(!threw) {
+      check_drive(copy_drive,0);
+      utl::verify(finished==copy_drive.phases_.back().back().time_>=point.e_time_,"check_H returned wrong result {}",finished);
+      check_drivable(copy_drive,intr_points,t,0);
+    }
+    it = std::find(it+1,drive.phase_types_.end(),cruising);
+  }
+}
+
+void test_check_function(vector<tt::train> const& trains,infra::infrastructure const& infra,infra::type_set const& record_types,Test_function test_function) {
   shortest_travel_time shortest_travel_time;
   signal_time const signal_time;
-  auto const ARRIVAL_FACTOR = 1.1;
   for (auto const& t : trains) {
     auto tpe_points = get_tpe_points(t, infra, record_types);
-    tpe_simulation::merge_duplicate_tpe_points(tpe_points);
-    auto intervals = tpe_simulation::split_intervals(
+    merge_duplicate_tpe_points(tpe_points);
+    auto intervals = split_intervals(
         get_intervals(t, record_types, infra), tpe_points, t.physics_);
     train_state current;
     current.time_ = si::time(t.start_time_.count());
     current.dist_ = si::length::zero();
     current.speed_ = t.start_speed_;
-    increase_time::train_drive drive;
+    train_drive drive;
     drive.start_state_ = current;
     tt::train::trip const trip(tt::train::trip::id{0}, t.id_, ZERO<absolute_time>);
     auto point_index = intervals.begin().length().is_zero() ? 0 : 1;
@@ -130,11 +226,13 @@ void test_check_function(soro::vector<tt::train> const& trains,infra::infrastruc
       if (interval.end_distance() == tpe_points[point_index].distance_) {
         tpe_points[point_index].e_time_ = tpe_points[point_index].e_time_*ARRIVAL_FACTOR;
         tpe_points[point_index].l_time_ = std::max(tpe_points[point_index].l_time_,tpe_points[point_index].e_time_);
-        if(function_to_use==0) AHD_check(drive,tpe_points[point_index],intervals.p_,t);
+        test_function(drive,tpe_points[point_index],intervals.p_,t);
+        /*if(function_to_use==0) AHD_check(drive,tpe_points[point_index],intervals.p_,t);
         if(function_to_use==1) AHA_check(drive,tpe_points[point_index],intervals.p_,t);
         if(function_to_use==2) HDH_check(drive,tpe_points[point_index],intervals.p_,t);
         if(function_to_use==3) DA_check(drive,intervals.p_,t);
         if(function_to_use==4) HA_check(drive,intervals.p_,t);
+        if(function_to_use==5) H_check(drive,intervals.p_,t);*/
         drive.erase_elements(0, drive.phases_.size());
         drive.start_state_ = current;
         ++point_index;

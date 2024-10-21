@@ -40,7 +40,7 @@ train_state brake_over_distance(si::speed const initial_speed,
 
   train_state result;
   result.speed_ = v_inner.sqrt();
-  result.time_ = (initial_speed - result.speed_) / deaccel;
+  result.time_ = - (initial_speed - result.speed_) / deaccel;
   result.dist_ = distance;
 
   return result;
@@ -55,6 +55,7 @@ train_state brake_backwards(train_state state,si::accel deaccel, si::length stop
 train_state brake_over_distance_with_target(train_state const& state,si::accel const& deaccel,si::length const&  stop_distance,si::speed const& target_speed){
   auto brake_state = brake_over_distance(state.speed_,deaccel,stop_distance);
   if(brake_state.speed_<target_speed) brake_state = brake(state.speed_,target_speed,deaccel);
+  utls::sassert(!brake_state.time_.is_negative(),"negative time in brake state");
   train_state result(state);
   result+=brake_state;
   result.speed_ = brake_state.speed_;
