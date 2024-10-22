@@ -383,84 +383,83 @@ bool check_AHA(train_drive& drive, rs::train_physics const& tp,
   drive.fix_drive(offset==0?0:offset-1);
   return result_found;
 }
-/**
- * tries to change part of a ride to make the ride take long enough.
- * It only inspects a part of the ride that has a H-D-H Phase-chain
- * @param drive the ride
- * @return true iff the methode finds an alteration that increases the time
- * enough
- */
-// sollte klappen
+
+si::speed find_optimal_speed(si::speed start_speed,si::accel accel,si::length start_dist,si::length end_dist,si::time time) {
+  utls::sassert(!accel.is_zero(),"Acceleration is zero");
+  // p and q from the p q formula
+  auto p = start_speed+accel*time;
+  auto square_root_val = (p.pow<2>()-start_speed.pow<2>()-2*accel*(end_dist-start_dist));
+  utls::sassert(!square_root_val.is_negative(),"Value in square root is negative");
+  return accel.is_negative()?p+square_root_val.sqrt():p-square_root_val.sqrt();
+}
+
+vector<train_state> continue_brake(train_state& end_brake,rs::train_physics const& tp,
+  si::speed const& min_speed,si::time const& target_time,si::length const& max_dist) {
+  utls::sassert(end_brake.speed_>=min_speed,"Attempt to brake to higher speed");
+  auto interval = get_interval(end_brake.dist_);
+  vector<train_state> result{end_brake};
+  while(end_brake.speed_>min_speed&&end_brake.dist_<max_dist) {
+    if(interval.length().is_zero()) {
+      ++interval;
+      continue;
+    }
+    auto deaccel = tp.braking_deaccel(
+      interval.infra_limit(),interval.bwp_limit(),interval.brake_path_length());
+    //The first state may not be on the interval border
+    auto length = interval.length()-(end_brake.dist_-interval.start_distance());
+    end_brake = rk4::brake_over_distance_with_target(end_brake,deaccel,length,min_speed);
+    result.push_back(end_brake);
+    auto end_cruise_time = end_brake.time_+get_cruise_time(end_brake.speed_,end_brake.dist_,max_dist);
+    if(end_cruise_time==target_time) {
+      return result;
+    }
+    if(end_cruise_time>target_time) {
+      result.pop_back();
+      auto state = result.back();
+      auto cruise_speed = find_optimal_speed(state.speed_,deaccel,state.dist_,max_dist,target_time-state.time_);
+      auto brake_delta = rk4::brake(state.speed_,cruise_speed,deaccel);
+      end_brake = state+brake_delta;
+      end_brake.speed_ = brake_delta.speed_;
+      result.push_back(end_brake);
+      utls::sassert(end_brake.time_+get_cruise_time(cruise_speed,end_brake.dist_,max_dist)==target_time,"find optimal speed returned wrong value");
+      return result;
+    }
+    ++interval;
+  }
+  return result;
+}
+
 bool check_HDH(train_drive& drive, rs::train_physics const& tp,
                int const& offset) {
   utls::sassert(drive.phase_types_[offset] == cruising &&
                     drive.phase_types_[offset + 1] == braking,
                 "Wrong types for HDH");
-  auto phase_it = drive.phases_.begin() + offset;
-  auto types_it = drive.phase_types_.begin() + offset;
-  auto initial = phase_it->front();
-  auto interval = get_interval(initial.dist_);
-  auto brake_end_speed = (phase_it + 1)->back().speed_;
-  vector<train_state> brake = {initial};
-  auto t_real = drive.phases_.back().back().time_;
-  bool result_found = false;
-  train_state end_of_new_cruise;
-  while (initial.speed_ != brake_end_speed) {
-    if (interval.length().is_zero()) {
-      ++interval;
-      continue;
-    }
-    auto deaccel =
-        tp.braking_deaccel(interval.infra_limit(), interval.bwp_limit(),
-                           interval.brake_path_length());
-    utls::sassert(deaccel.is_negative(), "deaccel isnt negative");
-    initial = rk4::brake_over_distance_with_target(
-        initial, deaccel, interval.length(), brake_end_speed);
-    ++interval;
-    brake.push_back(initial);
-    end_of_new_cruise =
-        initial.speed_ == brake_end_speed
-            ? (phase_it + 1)->back()
-            : find_state_with_speed(initial.speed_, *(phase_it + 1), false);
-    if (initial.time_ + get_cruise_time(initial, end_of_new_cruise) -
-            end_of_new_cruise.time_ >=
-        pt.e_time_ - t_real) {
-      result_found = true;
-      break;
-    }
-  }
-  auto brake_phase = *(phase_it + 1);
-  std::erase_if(brake_phase, [initial](train_state const& state) {
-    return state.speed_ >= initial.speed_;
-  });
-  brake_phase.insert(brake_phase.begin(), end_of_new_cruise);
-  end_of_new_cruise.time_ =
-      initial.time_ + get_cruise_time(initial, end_of_new_cruise);
+  auto cruise_phase = drive.phases_[offset];
+  auto brake_phase = drive.phases_[offset+1];
+  auto planned_dif = pt.e_time_-drive.phases_.back().back().time_;
+  auto total_time = brake_phase.back().time_+planned_dif-cruise_phase.front().time_;
+  auto brake_time = brake_phase.back().time_-brake_phase.front().time_;
+  auto cruise_length = cruise_phase.back().dist_-cruise_phase.front().dist_;
+  auto v_opt = cruise_length/(total_time-brake_time);
+  v_opt = std::max(v_opt,brake_phase.back().speed_);
   drive.erase_elements(offset, 2);
-  vector<train_state> new_cruise({initial, end_of_new_cruise});
-  auto new_phases = vector<vector<train_state>>{brake, new_cruise, brake_phase};
-  auto new_types = vector<phase_type>{braking, cruising, braking};
-  std::tie(new_phases, new_types) = make_new_phases(new_phases, new_types);
-  drive.phases_.insert(drive.phases_.begin() + offset, new_phases.begin(),
-                       new_phases.end());
-  drive.phase_types_.insert(drive.phase_types_.begin() + offset,
-                            new_types.begin(), new_types.end());
-  drive.fix_drive(offset);
-  return result_found;
+  auto new_brake = continue_brake(cruise_phase.front(),tp,v_opt,si::time::infinity(),si::length::infinity());
+  auto end_cruise = find_state_with_speed(v_opt,brake_phase,false);
+  std::erase_if(brake_phase, [v_opt](train_state const& state) {return state.speed_>=v_opt;});
+  brake_phase.insert(brake_phase.begin(),end_cruise);
+  end_cruise.time_ = new_brake.back().time_+get_cruise_time(new_brake.back(),end_cruise);
+  vector<train_state> new_cruise{new_brake.back(),end_cruise};
+  auto [new_phases,new_types] =
+    make_new_phases({new_brake,new_cruise,brake_phase},{braking,cruising,braking});
+  drive.insert(offset,new_phases,new_types);
+  drive.fix_drive(offset==0?0:offset-1);
+  return drive.phases_.back().back().time_>=pt.e_time_;
 }
-/**
- *
- * @param drive
- * @return
- */
+
+
 bool check_DHA(train_drive& drive, rs::train_physics const& tp,
                int const& offset) {
   throw utl::fail("not implemented DHA");
-  /*auto brake_phase = *phase_it;
-  auto accel_phase = *(phase_it+2);
-  auto brake_state = brake_phase.back();
-  auto accel_state = accel_phase.front();
-  return true;*/
 }
 train_state find_end_of_new_acceleration(
     vector<train_state> const& accel_phase) {
@@ -523,29 +522,6 @@ bool check_HA(train_drive& drive, rs::train_physics const& tp) {
   return slowest_drive(drive, 0, tp);
 }
 
-vector<train_state> continue_brake(train_state& end_brake,rs::train_physics const& tp,
-  si::speed const& target_speed,si::time const& target_time,si::length const& max_dist) {
-  utls::sassert(end_brake.speed_>=target_speed,"Attempt to brake to higher speed");
-  auto interval = get_interval(end_brake.dist_);
-  vector<train_state> result{end_brake};
-  while(end_brake.speed_>target_speed&&end_brake.dist_<max_dist) {
-    if(interval.length().is_zero()) {
-      ++interval;
-      continue;
-    }
-    auto deaccel = tp.braking_deaccel(
-      interval.infra_limit(),interval.bwp_limit(),interval.brake_path_length());
-    //The first state may not be on the interval border
-    auto length = interval.length()-(end_brake.dist_-interval.start_distance());
-    end_brake = rk4::brake_over_distance_with_target(end_brake,deaccel,length,target_speed);
-    result.push_back(end_brake);
-    if(end_brake.time_+get_cruise_time(end_brake.speed_,end_brake.dist_,max_dist)>=target_time) {
-      return result;
-    }
-    ++interval;
-  }
-  return result;
-}
 
 bool check_DH(train_drive& drive,rs::train_physics const& tp){
   auto brake_end = drive.phases_.front().back();
@@ -560,7 +536,8 @@ bool check_DH(train_drive& drive,rs::train_physics const& tp){
     train_state end_cruise(end_time,pt.distance_,brake_end.speed_);
     drive.push_back({brake_end,end_cruise},cruising);
   }
-  if(end_time<pt.e_time_) slowest_drive(drive,1,tp);
+  auto float_precision = si::time(FP_PRECISION<si::time::precision>);
+  if(end_time<pt.e_time_&&(pt.e_time_-end_time)>=float_precision) slowest_drive(drive,1,tp);
   return true;
 }
 
@@ -631,7 +608,8 @@ bool check_H(train_drive& drive,rs::train_physics const& tp) {
     train_state end_cruise(end_time,pt.distance_,brake_state.speed_);
     drive.push_back({brake_state,end_cruise},cruising);
   }
-  if(end_time<pt.e_time_) slowest_drive(drive,1,tp);
+  auto float_precision = si::time(FP_PRECISION<si::time::precision>);
+  if(end_time<pt.e_time_&&(pt.e_time_-end_time)>=float_precision) slowest_drive(drive,1,tp);
   return true;
 }
 bool check_D(train_drive& drive) {
@@ -647,6 +625,10 @@ bool check_D(train_drive& drive) {
 
 bool slowest_drive(train_drive& drive, int const& cruise_index,
                    rs::train_physics const& tp) {
+  auto float_precision = si::time(FP_PRECISION<si::time::precision>);
+  if(drive.phases_.back().back().time_ >= pt.e_time_||(pt.e_time_-drive.phases_.back().back().time_)<float_precision) {
+    return true;
+  }
   throw utl::fail("slowest_drive not implemented yet");
 }
 

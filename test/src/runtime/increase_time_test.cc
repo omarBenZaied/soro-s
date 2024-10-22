@@ -53,7 +53,8 @@ TEST_SUITE("increase_time suite"){
       state.speed_ = delta.speed_;
       ++interval;
     }
-    return state.speed_.is_positive()&&state.time_<pt.e_time_;
+    return state.dist_==pt.distance_&&state.time_<pt.e_time_;
+    //return state.speed_.is_positive()&&state.time_<pt.e_time_;
   }
   void check_increase_time(vector<tt::train> const& trains,infra::infrastructure const& infra,infra::type_set const& record_types){
     for(auto const& t:trains){
@@ -111,6 +112,7 @@ TEST_SUITE("increase_time suite"){
         utls::try_deserializing<tt::timetable>("cross_opts.raw", CROSS_OPTS, infra);
     check_increase_time(tt->trains_,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}));
   }
+
   TEST_CASE("check_AHD simple test"){
     train_drive drive;
     train_state one_delta(si::time(1),si::length(1),si::speed(1));
