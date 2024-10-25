@@ -61,7 +61,7 @@ bool check_DH(train_drive& drive,rs::train_physics const& tp);
 
 bool check_DA(train_drive& drive,rs::train_physics const& tp);
 
-//bool check_A(train_drive& drive);
+bool check_A(train_drive& drive,rs::train_physics const& tp);
 
 bool check_H(train_drive& drive,rs::train_physics const& tp);
 

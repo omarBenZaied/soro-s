@@ -478,7 +478,7 @@ TEST_SUITE("runtime suite") {
     }
   }
 
-  void check_get_end_state(soro::vector<train> const& trains,infrastructure const& infra,infra::type_set const& record_types,
+  void check_get_end_state(vector<train> const& trains,infrastructure const& infra,infra::type_set const& record_types,
                            std::function<tpe_point(tpe_point const&)> const& tpe_changer,
                            std::function<tpe_points(train const&,infrastructure const&,infra::type_set const&)> const& points_maker=get_tpe_points) {
     for (auto const& t : trains) {
@@ -487,7 +487,7 @@ TEST_SUITE("runtime suite") {
                 [](tpe_point const& pt1, tpe_point const& pt2) {
                   return pt1 < pt2;
                 });
-      soro::tpe_simulation::merge_duplicate_tpe_points(points);
+      tpe_simulation::merge_duplicate_tpe_points(points);
       for(int i=0;i<points.size();++i) points[i] = tpe_changer(points[i]);
       auto intervals = get_intervals(t, record_types, infra);
       auto split_intervals = soro::tpe_simulation::split_intervals(
@@ -495,15 +495,13 @@ TEST_SUITE("runtime suite") {
         if(t.start_speed_>points.front().v_max_&&points.front().distance_.is_zero()) throw std::logic_error("Train starts too fast");
         train_state state;
         state.speed_ = t.start_speed_;
-        state.dist_ = si::length::zero();
-        state.time_ = si::time(t.start_time_.count());
         auto interval = split_intervals.begin();
         train::trip const trip(train::trip::id{0}, t.id_, ZERO<absolute_time>);
-
+        si::time prev_e_time = si::time::zero();
         for (auto const& pt : points) {
           increase_time::train_drive drive;
-          std::tie(state,drive) = soro::tpe_simulation::get_end_state(state, pt, interval,
-                                                      nullptr, t, trip);
+          std::tie(state,drive) = tpe_simulation::get_end_state(state, pt, interval,
+                                                      nullptr, t, trip,prev_e_time);
           CHECK_EQ(state.dist_, pt.distance_);
           CHECK_GE(state.speed_, pt.v_min_);
           CHECK_LE(state.speed_, pt.v_max_);
@@ -511,6 +509,8 @@ TEST_SUITE("runtime suite") {
 
           check_drive(drive,0);
           check_drivable(drive,split_intervals.p_,t,0);
+
+          prev_e_time = pt.e_time_;
         }
       }
     }

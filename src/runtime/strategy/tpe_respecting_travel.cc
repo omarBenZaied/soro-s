@@ -269,12 +269,13 @@ soro::vector<interval_point> fix_intervals(interval& interval,tpe_point const& p
 }
 
 std::tuple<train_state,increase_time::train_drive> get_end_state(train_state current_state,tpe_point const& pt, interval& interval,
-                    train_safety* train_safety,soro::tt::train const& train,soro::tt::train::trip const& trip){
+                    train_safety* train_safety,tt::train const& train,tt::train::trip const& trip,si::time const& prev_e_time){
   signal_time signal_time;
   signal_time.time_ = ZERO<absolute_time>;
   shortest_travel_time shortest_travel_time;
   increase_time::train_drive drive;
   drive.start_state_ = current_state;
+  drive.start_state_.time_ -= prev_e_time;
   auto new_intervals = fix_intervals(interval,pt,train.physics_);
   struct interval fixed_interval = {new_intervals.data(),new_intervals.data()+1};
   while(current_state.dist_<pt.distance_){
@@ -285,16 +286,16 @@ std::tuple<train_state,increase_time::train_drive> get_end_state(train_state cur
     if(!drive.phases_.empty())drive.phases_.back().back().dist_ = fixed_interval.end_distance();
     ++fixed_interval;
     utl::verify(
-        current_state.time_ <= pt.l_time_,
-        "TPE-Point at distance {} with latest time {} can't be achieved",
-        pt.distance_, pt.l_time_);
+        current_state.time_ - prev_e_time <= pt.l_time_,
+        "TPE-Point at distance {} with latest time {} can't be achieved,reached time {}",
+        pt.distance_, pt.l_time_, current_state.time_-prev_e_time);
   }
   return {current_state,drive};
 }
-soro::vector<train_state> tpe_respecting_simulation(
+vector<train_state> tpe_respecting_simulation(
     tpe_points& tpe_points, train_state const& initial, train_safety* train_safety,
-    soro::tt::train const& train, soro::tt::train::trip const& trip,
-    soro::infra::infrastructure const& infra,infra::type_set const& record_types) {
+    tt::train const& train, soro::tt::train::trip const& trip,
+    infra::infrastructure const& infra,infra::type_set const& record_types) {
   if(tpe_points.empty()) return {initial};
   utls::sassert(initial.speed_<=tpe_points.front().v_max_&&initial.speed_>=tpe_points.front().v_min_&&initial.dist_==tpe_points.front().distance_,"initial state does not fullfill first tpe or initial isnt at distance");
   std::sort(tpe_points.begin(), tpe_points.end(),
@@ -303,16 +304,17 @@ soro::vector<train_state> tpe_respecting_simulation(
   auto route_intervals =
       get_intervals(train, record_types, infra);
   intervals intervals = split_intervals(route_intervals, tpe_points,train.physics_);
-  soro::vector<train_state> result;
+  vector<train_state> result;
   result.reserve(tpe_points.size());
   result.push_back(initial);
   auto interval = intervals.begin();
   //fix_tpe_speeds(tpe_points,interval,train.physics_,initial);
   auto current_state = initial;
+  auto prev_e_time = si::time::zero();
   for (int i = 1; i < tpe_points.size() ; ++i) {
     auto const& end_point = tpe_points[i];
     increase_time::train_drive drive;
-    std::tie(current_state,drive) = get_end_state(current_state,end_point,interval,train_safety,train,trip);
+    std::tie(current_state,drive) = get_end_state(current_state,end_point,interval,train_safety,train,trip,prev_e_time);
     utls::sassert(current_state.dist_==end_point.distance_,"Distance of current_state isnt equal to distance of tpe_point. I dont know how that happened, but it sure did.");
     //das ist ein interessanter fall der nur auftreten kann zwischen dem initialzustand und dem ersten tpe-punkt
     if(current_state.speed_<end_point.v_min_) throw std::logic_error("Minimum speed of "+std::to_string(end_point.v_min_.val_)+" at distance "+std::to_string(end_point.distance_.val_)+" cant be driven");
@@ -328,6 +330,7 @@ soro::vector<train_state> tpe_respecting_simulation(
       //current_state = increase_time(result.back());
     }
     result.push_back(current_state);
+    prev_e_time = end_point.e_time_;
   }
   return result;
 }

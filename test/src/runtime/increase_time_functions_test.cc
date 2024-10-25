@@ -35,6 +35,7 @@ TEST_SUITE("increase_time functions suite"){
     test_check_function({tt->trains_[0]},infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),H_check);
     //Same here
     test_check_function({tt->trains_[0]},infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),DH_check);
+    test_check_function({tt->trains_[0]},infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),A_check);
   }
 
   TEST_CASE("increase time DA HA intersection"){
@@ -43,6 +44,7 @@ TEST_SUITE("increase_time functions suite"){
     test_check_function({tt->trains_[0]},infra,infra::type_set({soro::infra::type::HALT,soro::infra::type::EOTD}),HA_check);
     test_check_function({tt->trains_[0]},infra,infra::type_set({soro::infra::type::HALT,soro::infra::type::EOTD}),H_check);
     test_check_function({tt->trains_[0]},infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),DH_check);
+    test_check_function({tt->trains_[0]},infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),A_check);
   }
 
   TEST_CASE("increase time DA HA follow"){
@@ -54,6 +56,7 @@ TEST_SUITE("increase_time functions suite"){
     test_check_function(tt->trains_,infra,infra::type_set({soro::infra::type::HALT,soro::infra::type::EOTD}),H_check);
     //This also does nothing
     test_check_function(tt->trains_,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),DH_check);
+    test_check_function(tt->trains_,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),A_check);
   }
 
   TEST_CASE("increase time DA HA cross"){
@@ -66,6 +69,7 @@ TEST_SUITE("increase_time functions suite"){
     test_check_function(tt->trains_,infra,infra::type_set({soro::infra::type::HALT,soro::infra::type::EOTD}),H_check);
     //This does nothing
     test_check_function(tt->trains_,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),DH_check);
+    test_check_function(tt->trains_,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),A_check);
   }
 
 }

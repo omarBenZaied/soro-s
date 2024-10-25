@@ -232,12 +232,12 @@ void increase_time(train_drive& drive,
       return;
     }
   }
+  if(drive.phase_types_.front()==acceleration&&check_A(drive,tp)) return;
   if(drive.phase_types_.front()==cruising) {
     check_H(drive,tp);
     return;
   }
   if(drive.phase_types_.front()==braking) check_D(drive);
-  throw utl::fail("check_A not implemented yet");
 }
 
 train_state find_state_with_speed(si::speed const& speed,
@@ -284,18 +284,35 @@ void make_result_AHD(train_drive& drive, int const& offset,
   drive.insert(offset, phases, types);
   drive.fix_drive(offset==0?offset:offset-1);
 }
+
+bool check_cruise_speed_sufficient(train_state start_state,train_state end_state,si::time planned_dif) {
+  auto t_old = end_state.time_-start_state.time_;
+  return get_cruise_time(start_state,end_state)-t_old>=planned_dif;
+}
+
+vector<train_state> search_for_cruise_start(vector<train_state> accel_phase,si::speed speed,vector<train_state> brake_phase,si::time planned_dif) {
+  for(int i=accel_phase.size()-2; i>=0&&accel_phase[i].speed_>=speed; --i) {
+    auto end_cruise = find_state_with_speed(accel_phase[i].speed_,brake_phase,false);
+    if(check_cruise_speed_sufficient(accel_phase[i],end_cruise,planned_dif)) {
+      return {accel_phase[i],end_cruise};
+    }
+  }
+  auto start_cruise = find_state_with_speed(speed,accel_phase,true);
+  auto end_cruise = find_state_with_speed(speed,brake_phase,false);
+  return {start_cruise,end_cruise};
+}
+
 // das hier sollte klappen
 bool check_AHD(train_drive& drive, int const& offset) {
-  auto phase_it = drive.phases_.begin() + offset;
-  auto type_it = drive.phase_types_.begin() + offset;
-  bool second_is_braking = *(type_it + 1) == braking;
-  utls::sassert(*type_it == acceleration &&
-                  (second_is_braking || *(type_it + 2) == braking),
+  bool first_is_accel = drive.phase_types_[offset] ==acceleration;
+  bool second_is_braking = drive.phase_types_[offset+1] == braking;
+  auto third_type = offset+2<drive.phase_types_.size()?drive.phase_types_[offset+2]:invalid;
+  utls::sassert(first_is_accel &&
+                  (second_is_braking || third_type == braking),
               "AHD got wrong types");
   // several values needed for the calculations
-  auto t_real = drive.phases_.back().back().time_;
-  auto brake_phase = second_is_braking ? *(phase_it + 1) : *(phase_it + 2);
-  auto accel_phase = *phase_it;
+  auto brake_phase = second_is_braking ? drive.phases_[offset+1] : drive.phases_[offset+2];
+  auto accel_phase = drive.phases_[offset];
   auto min_cruise_v =
       std::max(accel_phase.front().speed_, brake_phase.back().speed_);
   auto end_accel = accel_phase.front().speed_ >= brake_phase.back().speed_
@@ -307,28 +324,17 @@ bool check_AHD(train_drive& drive, int const& offset) {
           : find_state_with_speed(min_cruise_v, brake_phase, false);
   auto distance = end_new_cruise.dist_ - end_accel.dist_;
   auto t_old = end_new_cruise.time_ - end_accel.time_;
-  if (distance / min_cruise_v - t_old <= pt.e_time_ - t_real) {
+  auto time_dif = distance / min_cruise_v - t_old;
+  auto t_real = drive.phases_.back().back().time_;
+  auto planned_dif = pt.e_time_ - t_real;
+  if (time_dif <= planned_dif) {
     make_result_AHD(drive, offset, accel_phase, brake_phase, min_cruise_v,
                     end_new_cruise, end_accel);
     return distance / min_cruise_v - t_old == pt.e_time_ - t_real;
   }
-  // hier könnte es passieren, dass der letzte angeschaute zustand in
-  // acceleration auch zu schnell ist dann würde ne exception geworfen werden.
-  // Hoffe nicht.
-  for (int i = accel_phase.size() - 2;
-       i >= 0 && accel_phase[i].speed_ >= min_cruise_v; --i) {
-    end_new_cruise =
-        find_state_with_speed(accel_phase[i].speed_, brake_phase, false);
-    distance = end_new_cruise.dist_ - accel_phase[i].dist_;
-    if (distance / accel_phase[i].speed_ + accel_phase[i].time_ -
-            end_new_cruise.time_ >=
-        pt.e_time_ - t_real) {
-      make_result_AHD(drive, offset, accel_phase, brake_phase,
-                      accel_phase[i].speed_, end_new_cruise, accel_phase[i]);
-      return true;
-    }
-  }
-  throw std::logic_error("check_AHD should not get here");
+  auto cruise_phase = search_for_cruise_start(accel_phase,min_cruise_v,brake_phase,planned_dif);
+  make_result_AHD(drive,offset,accel_phase,brake_phase,cruise_phase.front().speed_,cruise_phase.back(),cruise_phase.front());
+  return true;
 }
 // sollte klappen
 bool check_AHA(train_drive& drive, rs::train_physics const& tp,
@@ -336,12 +342,13 @@ bool check_AHA(train_drive& drive, rs::train_physics const& tp,
   utls::sassert(drive.phase_types_[offset] == acceleration &&
                     drive.phase_types_[offset + 1] == cruising,
                 "Wrong types for AHA");
-  auto t_real = drive.phases_.back().back().time_;
+  auto planned_dif = pt.e_time_-drive.phases_.back().back().time_;
   train_state state = drive.phases_[offset + 1].back();
+  auto accel_phase = drive.phases_[offset];
   bool result_found = false;
   train_state accel_state;
   vector<train_state> backwards_accel_states{state};
-  auto lowest_speed = drive.phases_[offset].front().speed_;
+  auto lowest_speed = accel_phase.front().speed_;
   while (state.speed_ != lowest_speed) {
     auto delta = rk4::rk4_step(state.speed_, rk4::delta_t,
                                get_interval(state.dist_).slope(), tp);
@@ -356,21 +363,17 @@ bool check_AHA(train_drive& drive, rs::train_physics const& tp,
     state -= delta;
     backwards_accel_states.push_back(state);
     accel_state =
-        find_state_with_speed(state.speed_, drive.phases_[offset], true);
-    if ((state.dist_ - accel_state.dist_) / state.speed_ - state.time_ +
-            accel_state.time_ >=
-        pt.e_time_ - t_real) {
+        find_state_with_speed(state.speed_, accel_phase, true);
+    if (check_cruise_speed_sufficient(accel_state,state,planned_dif)) {
       result_found = true;
       break;
     }
   }
-  auto accel_phase = drive.phases_[offset];
   std::erase_if(accel_phase, [accel_state](train_state const& phase_state) {
     return phase_state.speed_ >= accel_state.speed_;
   });
-  int to_delete = 2;
-  drive.erase_elements(offset, to_delete);
-  std::reverse(backwards_accel_states.begin(), backwards_accel_states.end());
+  drive.erase_elements(offset, 2);
+  std::ranges::reverse(backwards_accel_states);
   vector<train_state> new_cruise{accel_state, state};
   accel_phase.push_back(accel_state);
   auto [phases, types] =
@@ -461,6 +464,7 @@ bool check_DHA(train_drive& drive, rs::train_physics const& tp,
                int const& offset) {
   throw utl::fail("not implemented DHA");
 }
+
 train_state find_end_of_new_acceleration(
     vector<train_state> const& accel_phase) {
   int i;
@@ -558,41 +562,44 @@ bool check_DA(train_drive& drive, rs::train_physics const& tp) {
   return slowest_drive(drive, 1, tp);
 }
 
-bool check_A(train_drive& drive) {
-  bool state_changed = false;
+bool check_A(train_drive& drive,rs::train_physics const& tp) {
+  utls::sassert(drive.phase_types_ == vector<phase_type>{acceleration},"Wrong types in check_A");
   auto& phase = drive.phases_.front();
-  for (int i = phase.size() - 2; i >= 0; --i) {
-    auto state = phase[i];
-    if (state.speed_ <= pt.v_min_) {
-      state =
-          state.speed_ == pt.v_min_
-              ? state
-              : find_state_with_speed(pt.v_min_, drive.phases_.front(), true);
-      // Nein, falsch, hier muss ein slowest drive gemacht werden
-      if (state.time_ + (pt.distance_ - state.dist_) / pt.v_min_ < pt.e_time_)
-        throw std::logic_error("TPE cant be driven.");
+  train_state end_accel;
+  bool state_changed = false;
+  int i;
+  for (i = phase.size() - 2; i >= 0; --i) {
+    end_accel = phase[i];
+    if (end_accel.speed_ < pt.v_min_) {
+      end_accel = find_state_with_speed(pt.v_min_, drive.phases_.front(), true);
       state_changed = true;
     }
-    if (i == 0 || state.time_ + (pt.distance_ - state.dist_) / state.speed_ >=
+    if (i == 0 || end_accel.speed_ == pt.v_min_||end_accel.time_ + get_cruise_time(end_accel.speed_,end_accel.dist_,pt.distance_) >=
                       pt.e_time_) {
-      drive.phases_.front().erase(drive.phases_.front().begin() + i + 1,
-                                  drive.phases_.front().end());
-      train_state end_state(
-          state.time_ + (pt.distance_ - state.dist_) / state.speed_,
-          pt.distance_, state.speed_);
-      auto cruise_phase = {state, end_state};
-      if (state_changed) drive.phases_.front().push_back(state);
-      if (drive.phases_.front().size() == 1) {
-        drive.phases_.pop_back();
-        drive.phase_types_.pop_back();
-      }
-      drive.phases_.emplace_back(cruise_phase);
-      drive.phase_types_.push_back(cruising);
-      return state.time_ + (pt.distance_ - state.dist_) / state.speed_ >=
-             pt.e_time_;
+      break;
     }
   }
-  throw std::logic_error("for in check_A didnt return a value");
+  if(end_accel.speed_.is_zero()) {
+    auto copy_pt = pt;
+    throw std::logic_error("check_a created cruise of 0 speed");
+  }
+  drive.phases_.front().erase(drive.phases_.front().begin() + i + 1,
+                                  drive.phases_.front().end());
+  if(state_changed) drive.phases_.front().push_back(end_accel);
+  train_state end_state(
+      end_accel.time_ + get_cruise_time(end_accel.speed_,end_accel.dist_,pt.distance_),
+      pt.distance_, end_accel.speed_);
+  auto cruise_phase = {end_accel, end_state};
+  if (drive.phases_.front().size() == 1) {
+    drive.phases_.pop_back();
+    drive.phase_types_.pop_back();
+  }
+  drive.phases_.emplace_back(cruise_phase);
+  drive.phase_types_.push_back(cruising);
+  auto finished = end_state.time_>=pt.e_time_;
+  if(finished||drive.phases_.size()==1) return finished;
+  if(check_AHA(drive,tp,0)) return true;
+  return check_HA(drive,tp);
 }
 
 bool check_H(train_drive& drive,rs::train_physics const& tp) {

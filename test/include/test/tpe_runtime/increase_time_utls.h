@@ -19,5 +19,6 @@ void DA_check(train_drive& drive,tpe_point const&,vector<interval_point> const& 
 void HA_check(train_drive& drive,tpe_point const&,vector<interval_point> const& intr_points,tt::train const& t);
 Test_function DH_check;
 void H_check(train_drive& drive,tpe_point const&,vector<interval_point> const& intr_points,tt::train const& t);
+Test_function A_check;
 void test_check_function(vector<tt::train> const& trains,infra::infrastructure const& infra,infra::type_set const& record_types,Test_function test_function);
 }// namespace increase_time

@@ -63,16 +63,16 @@ TEST_SUITE("increase_time suite"){
       auto intervals = split_intervals(get_intervals(t,record_types,infra),tpe_points,t.physics_);
       train_state current;
       current.speed_ = t.start_speed_;
-      current.time_ = si::time(t.start_time_.count());
       tt::train::trip const trip(tt::train::trip::id{0}, t.id_, ZERO<absolute_time>);
+      auto prev_time = si::time::zero();
       bool actually_tested = false;
       auto interval = intervals.begin();
       for(auto& tpe_point :tpe_points){
         tpe_point.e_time_ = tpe_point.e_time_*ARRIVAL_FACTOR;
         tpe_point.l_time_ = std::max(tpe_point.l_time_,tpe_point.e_time_);
         train_drive drive;
-        std::tie(current,drive) = get_end_state(current,tpe_point,interval,nullptr,t,trip);
-        if(drive.phase_types_.size()>=2) {
+        std::tie(current,drive) = get_end_state(current,tpe_point,interval,nullptr,t,trip,prev_time);
+        if(drive.phase_types_.size()>=1) {
           actually_tested = true;
           if(should_throw(drive,intervals.p_,t.physics_,tpe_point)) CHECK_THROWS(increase_time::increase_time(drive, tpe_point, t.physics_,
                                           intervals.p_, standard_next_offset));
@@ -84,8 +84,7 @@ TEST_SUITE("increase_time suite"){
             check_drivable(drive, intervals.p_, t, 0);
           }
         }
-        drive.erase_elements(0,drive.phases_.size());
-        drive.start_state_ = current;
+        current.time_ = si::time::zero();
       }
       utl::verify(actually_tested,"increase time was never used for train with id {}",t.id_);
     }
@@ -93,7 +92,8 @@ TEST_SUITE("increase_time suite"){
   TEST_CASE("increase_time hill"){
     infra::infrastructure const infra(HILL_OPTS);
     tt::timetable const tt(HILL_TT_OPTS, infra);
-    check_increase_time({tt->trains_[0]},infra,infra::type_set({infra::type::HALT,infra::type::EOTD}));
+    vector<tt::train> trains{tt->trains_.begin(),tt->trains_.end()-1};
+    check_increase_time(trains,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}));
   }
   TEST_CASE("increase_time intersection"){
     infra::infrastructure const infra(INTER_OPTS);

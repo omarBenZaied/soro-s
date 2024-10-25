@@ -1,14 +1,16 @@
 #pragma once
+#include <utl/pipes/find.h>
+
 #include "doctest/doctest.h"
 #include "soro/runtime/common/increase_time.h"
 #include "soro/runtime/common/phase_checkers.h"
-#include "soro/timetable/timetable.h"
-#include "soro/runtime/strategy/shortest_travel_time.h"
 #include "soro/runtime/common/signal_time.h"
 #include "soro/runtime/common/tpe_respecting_travel.h"
-#include "test/tpe_runtime/tpe_simulation_utls.h"
-#include "test/tpe_runtime/tpe_arrival_factor.h"
 #include "soro/runtime/physics/rk4/brake.h"
+#include "soro/runtime/strategy/shortest_travel_time.h"
+#include "soro/timetable/timetable.h"
+#include "test/tpe_runtime/tpe_arrival_factor.h"
+#include "test/tpe_runtime/tpe_simulation_utls.h"
 namespace increase_time{
 using namespace soro;
 using namespace soro::runtime;
@@ -102,7 +104,7 @@ void HA_check(train_drive& drive,tpe_point const&,vector<interval_point> const& 
     set_intervals(intr_points);
     bool finished = check_HA(copy_drive,t.physics_);
     check_drive(copy_drive,0);
-    utl::verify(finished==(drive.phases_.back().back().time_>=point.e_time_),"check_HA returned wrong result {}",finished);
+    utl::verify(finished==(copy_drive.phases_.back().back().time_>=point.e_time_),"check_HA returned wrong result {}",finished);
     check_drivable(copy_drive,intr_points,t,0);
     index = next_index(drive,index+1,HA_checker);
   }
@@ -202,6 +204,27 @@ void H_check(train_drive& drive,tpe_point const&,vector<interval_point> const& i
   }
 }
 
+void A_check(train_drive& drive,tpe_point const&,vector<interval_point> const& intr_points,tt::train const& t) {
+  auto it = std::ranges::find(drive.phase_types_,acceleration);
+  while(it!=drive.phase_types_.end()) {
+    std::cout<<"A tested"<<std::endl;
+    train_drive copy_drive;
+    auto phase = *(drive.phases_.begin()+(it-drive.phase_types_.begin()));
+    copy_drive.push_back(phase,acceleration);
+    copy_drive.start_state_ = phase.front();
+    auto e_time = phase.back().time_*ARRIVAL_FACTOR;
+    tpe_point point (phase.back().dist_,e_time,si::time::infinity(),si::speed::zero(),si::speed::infinity());
+    set_pt(point);
+    set_intervals(intr_points);
+    bool finished = check_A(copy_drive,t.physics_);
+    utl::verify(finished==copy_drive.phases_.back().back().time_>=point.e_time_,"check_A returned wrong result {}",finished);
+    utl::verify(finished||copy_drive.phases_.size()==1,"check A returned false even though there are multiple phases");
+    check_drive(copy_drive,0);
+    check_drivable(copy_drive,intr_points,t,0);
+    it = std::find(it+1,drive.phase_types_.end(),acceleration);
+  }
+}
+
 void test_check_function(vector<tt::train> const& trains,infra::infrastructure const& infra,infra::type_set const& record_types,Test_function test_function) {
   shortest_travel_time shortest_travel_time;
   signal_time const signal_time;
@@ -211,7 +234,7 @@ void test_check_function(vector<tt::train> const& trains,infra::infrastructure c
     auto intervals = split_intervals(
         get_intervals(t, record_types, infra), tpe_points, t.physics_);
     train_state current;
-    current.time_ = si::time(t.start_time_.count());
+    current.time_ = si::time::zero();//si::time(t.start_time_.count());
     current.dist_ = si::length::zero();
     current.speed_ = t.start_speed_;
     train_drive drive;

@@ -10,9 +10,15 @@ tpe_points get_tpe_points(tt::train const& t, infra::infrastructure const& infra
                           infra::type_set const& record_types){
   auto timestamps = rk4::runtime_calculation(t,infra,record_types,runtime::use_surcharge::no);
   tpe_points pts;
-  for(auto e:timestamps.times_) {
-    tpe_point point(e.dist_, si::time(e.arrival_.count()),
-                    si::time(e.departure_.count()), si::speed::zero(),
+  for(int i=0; i < timestamps.times_.size(); ++i) {
+    auto event = timestamps.times_[i];
+    auto prev_time = i>0?timestamps.times_[i-1].departure_:t.start_time_;
+    auto e_time = event.arrival_-prev_time;
+    auto l_time = event.departure_-prev_time;
+    if(e_time.count()!=0) ++e_time;
+    if(l_time.count()!=0) ++l_time;
+    tpe_point point(event.dist_, si::time(e_time.count()),
+                    si::time(l_time.count()), si::speed::zero(),
                     si::speed::infinity());
     pts.push_back(point);
   }
