@@ -30,6 +30,8 @@ struct train_drive {
   runtime::train_state start_state_;
 };
 
+void trim_drive(train_drive& drive);
+
 si::time get_cruise_time(si::speed const& speed, si::length const& start,
                          si::length const& stop);
 si::time get_cruise_time(runtime::train_state const& start, runtime::train_state const& end);

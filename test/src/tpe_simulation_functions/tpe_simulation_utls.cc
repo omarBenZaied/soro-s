@@ -15,7 +15,7 @@ tpe_points get_tpe_points(tt::train const& t, infra::infrastructure const& infra
     auto prev_time = i>0?timestamps.times_[i-1].departure_:t.start_time_;
     auto e_time = event.arrival_-prev_time;
     auto l_time = event.departure_-prev_time;
-    if(e_time.count()!=0) ++e_time;
+    //if(e_time.count()!=0) ++e_time;
     if(l_time.count()!=0) ++l_time;
     tpe_point point(event.dist_, si::time(e_time.count()),
                     si::time(l_time.count()), si::speed::zero(),
@@ -78,7 +78,6 @@ void check_acceleration_possible(vector<train_state> const& accel,vector<interva
     interval current_interval  = it->distance_>state.dist_?interval(&*(it-1),&*it):interval(&*it,&*(it+1));
     auto tractive_force = t.physics_.tractive_force(state.speed_);
     auto resistive_force = t.physics_.resistive_force(state.speed_,current_interval.slope());
-    if(resistive_force.is_negative()) std::cout<<"resistive force is negative"<<std::endl;
     utls::sassert(tractive_force>resistive_force.abs(),"acceleration not possible");
   }
 }

@@ -38,6 +38,16 @@ si::time get_cruise_time(train_state const& start, train_state const& end) {
                 "Cruise time demanded for non cruise");
   return get_cruise_time(start.speed_, start.dist_, end.dist_);
 }
+
+void trim_drive(train_drive& drive) {
+  for(int i=0;i<drive.phases_.size();++i) {
+    auto& phase = drive.phases_[i];
+    phase.erase(phase.begin()+1,phase.end()-1);
+    phase.shrink_to_fit();
+  }
+  drive.phases_.shrink_to_fit();
+}
+
 void fix_times_cruise(vector<train_state>& phase, train_state const& before) {
   phase[0].time_ = before.time_;
   phase[1].time_ = phase[0].time_ + get_cruise_time(phase[0], phase[1]);
@@ -625,6 +635,10 @@ bool check_D(train_drive& drive) {
   if (drive.phases_.back().back().time_ >= pt.e_time_)
     throw std::logic_error(
         "Train is already slow enough, no use in calling this");
+  if(drive.phases_.back().back().speed_.is_zero()) {
+    drive.phases_.back().back().time_ = pt.e_time_;
+    return true;
+  }
   throw std::logic_error(
       "Train takes too short even with constant braking. This should never "
       "happen.");

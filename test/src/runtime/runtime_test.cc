@@ -429,7 +429,6 @@ TEST_SUITE("runtime suite") {
       interval current_interval  = it->distance_>state.dist_?interval(&*(it-1),&*it):interval(&*it,&*(it+1));
       auto tractive_force = t.physics_.tractive_force(state.speed_);
       auto resistive_force = t.physics_.resistive_force(state.speed_,current_interval.slope());
-      if(resistive_force.is_negative()) std::cout<<"resistive force is negative"<<std::endl;
       utls::sassert(tractive_force>resistive_force.abs(),"acceleration not possible");
     }
   }
@@ -526,7 +525,7 @@ TEST_SUITE("runtime suite") {
         initial.time_ = si::time(t.start_time_.count());
         initial.speed_ = t.start_speed_;
         train::trip const trip(train::trip::id{0}, t.id_, ZERO<absolute_time>);
-        auto results = soro::tpe_simulation::tpe_respecting_simulation(points,initial,nullptr,t,trip,infra,record_types);
+        auto [results,drive] = soro::tpe_simulation::tpe_respecting_simulation(points,initial,nullptr,t,trip,infra,record_types);
         CHECK_EQ(results.size(),points.size());
         for(int i=0;i<results.size();++i){
           CHECK_EQ(results[i].dist_,points[i].distance_);

@@ -1,9 +1,10 @@
 //
 // Created by Omar Ben Zaied on 13.08.2024.
 //
+#pragma once
 #include "soro/si/units.h"
 #include "soro/base/soro_types.h"
-#pragma once
+
 namespace soro::train_path_envelope{
 struct tpe_point{
   tpe_point(si::length const& start,si::time const& e_time, si::time const& l_time,si::speed const& v_min,si::speed const& v_max)

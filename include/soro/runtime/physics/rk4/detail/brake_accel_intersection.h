@@ -25,24 +25,19 @@ inline train_state brake_accel_intersection(train_state const& brake_state,
                                             interval const& interval,
                                             soro::rs::train_physics const& tp) {
   train_state second_to_last;
+  soro::si::speed brake_speed;
   do {
     second_to_last = accel_state;
     accel_state +=
         rk4::rk4_step(accel_state.speed_, rk4::delta_t, interval.slope(), tp);
-  } while (accel_state.speed_ <
-           rk4::brake_over_distance(
+    brake_speed = rk4::brake_over_distance(
                brake_state.speed_,
                tp.braking_deaccel(interval.infra_limit(), interval.bwp_limit(),
                                   interval.brake_path_length()),
-               accel_state.dist_)
-               .speed_);
-  if (accel_state.speed_ ==
-      rk4::brake_over_distance(
-          brake_state.speed_,
-          tp.braking_deaccel(interval.infra_limit(), interval.bwp_limit(),
-                             interval.brake_path_length()),
-          accel_state.dist_)
-          .speed_)
+               accel_state.dist_-brake_state.dist_)
+               .speed_;
+  } while (accel_state.speed_ < brake_speed);
+  if (accel_state.speed_ ==brake_speed)
     return accel_state;
   auto s_a = second_to_last.dist_;
   auto s_b = brake_state.dist_;
@@ -57,15 +52,15 @@ inline train_state brake_accel_intersection(train_state const& brake_state,
       !a_a.is_zero(),
       "Acceleration is zero, no brake_accel_intersection can be calculated");
   soro::utls::sassert(
-      !a_b.is_zero(),
-      "Decceleration is zero, no brake_accel_intersection can be calculated");
-
+      a_b.is_negative(),
+      "Decceleration is not negative, no brake_accel_intersection can be calculated");
+  //TODO: SOURCE?
   auto result_speed =
       (s_a - s_b - v_a.pow<2>() / (2 * a_a) + v_b.pow<2>() / (2 * a_b)) /
       (1 / (2 * a_a) - 1 / (2 * a_b));
   soro::utls::sassert(!result_speed.is_negative(), "Intersection doesnt exist");
   train_state state;
-  state.speed_ = soro::si::speed{result_speed.sqrt().val_};
+  state.speed_ = soro::si::speed(result_speed.sqrt().val_);
   state.dist_ = s_a + v_a * (state.speed_ - v_a) / a_a +
                 0.5 * a_a * ((state.speed_ - v_a) / a_a).pow<2>();
   return state;

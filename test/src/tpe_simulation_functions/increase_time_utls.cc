@@ -250,12 +250,6 @@ void test_check_function(vector<tt::train> const& trains,infra::infrastructure c
         tpe_points[point_index].e_time_ = tpe_points[point_index].e_time_*ARRIVAL_FACTOR;
         tpe_points[point_index].l_time_ = std::max(tpe_points[point_index].l_time_,tpe_points[point_index].e_time_);
         test_function(drive,tpe_points[point_index],intervals.p_,t);
-        /*if(function_to_use==0) AHD_check(drive,tpe_points[point_index],intervals.p_,t);
-        if(function_to_use==1) AHA_check(drive,tpe_points[point_index],intervals.p_,t);
-        if(function_to_use==2) HDH_check(drive,tpe_points[point_index],intervals.p_,t);
-        if(function_to_use==3) DA_check(drive,intervals.p_,t);
-        if(function_to_use==4) HA_check(drive,intervals.p_,t);
-        if(function_to_use==5) H_check(drive,intervals.p_,t);*/
         drive.erase_elements(0, drive.phases_.size());
         drive.start_state_ = current;
         ++point_index;

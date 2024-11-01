@@ -45,7 +45,7 @@ train_state brake_over_distance(si::speed const initial_speed,
 
   return result;
 }
-train_state brake_backwards(train_state state,si::accel deaccel, si::length stop_distance,si::speed max_speed){
+train_state brake_backwards(train_state const& state,si::accel const& deaccel, si::length const& stop_distance,si::speed const& max_speed){
   train_state result;
   result.dist_ = stop_distance;
   result.speed_ = (state.speed_.pow<2>()+2*deaccel*(stop_distance-state.dist_)).sqrt();

@@ -56,7 +56,7 @@ TEST_SUITE("increase_time suite"){
     return state.dist_==pt.distance_&&state.time_<pt.e_time_;
     //return state.speed_.is_positive()&&state.time_<pt.e_time_;
   }
-  void check_increase_time(vector<tt::train> const& trains,infra::infrastructure const& infra,infra::type_set const& record_types){
+  void check_increase_time(vector<tt::train> const& trains,infra::infrastructure const& infra,infra::type_set const& record_types,double arrival_factor){
     for(auto const& t:trains){
       auto tpe_points = get_tpe_points(t,infra,record_types);
       merge_duplicate_tpe_points(tpe_points);
@@ -68,7 +68,7 @@ TEST_SUITE("increase_time suite"){
       bool actually_tested = false;
       auto interval = intervals.begin();
       for(auto& tpe_point :tpe_points){
-        tpe_point.e_time_ = tpe_point.e_time_*ARRIVAL_FACTOR;
+        tpe_point.e_time_ = tpe_point.e_time_*arrival_factor;
         tpe_point.l_time_ = std::max(tpe_point.l_time_,tpe_point.e_time_);
         train_drive drive;
         std::tie(current,drive) = get_end_state(current,tpe_point,interval,nullptr,t,trip,prev_time);
@@ -93,24 +93,24 @@ TEST_SUITE("increase_time suite"){
     infra::infrastructure const infra(HILL_OPTS);
     tt::timetable const tt(HILL_TT_OPTS, infra);
     vector<tt::train> trains{tt->trains_.begin(),tt->trains_.end()-1};
-    check_increase_time(trains,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}));
+    check_increase_time(trains,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),ARRIVAL_FACTOR);
   }
   TEST_CASE("increase_time intersection"){
     infra::infrastructure const infra(INTER_OPTS);
     tt::timetable const tt(INTER_TT_OPTS, infra);
-    check_increase_time({tt->trains_[0]},infra,infra::type_set({infra::type::HALT,infra::type::EOTD}));
+    check_increase_time({tt->trains_[0]},infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),ARRIVAL_FACTOR);
   }
   TEST_CASE("increase_time follow"){
     infra::infrastructure const infra(SMALL_OPTS);
     tt::timetable const tt(FOLLOW_OPTS, infra);
-    check_increase_time(tt->trains_,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}));
+    check_increase_time(tt->trains_,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),1.5);
   }
   TEST_CASE("increase_time cross") {
     auto const infra =
         utls::try_deserializing<infra::infrastructure>("small_opts.raw", SMALL_OPTS);
     auto const tt =
         utls::try_deserializing<tt::timetable>("cross_opts.raw", CROSS_OPTS, infra);
-    check_increase_time(tt->trains_,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}));
+    check_increase_time(tt->trains_,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),1.5);
   }
 
   TEST_CASE("check_AHD simple test"){

@@ -179,7 +179,7 @@ train_state find_halt_position(train_state const& second_to_last,si::accel accel
   train_state result;
   result.speed_ = si::speed::zero();
   result.time_ = second_to_last.time_-time;
-  result.dist_ = second_to_last.dist_-0.5*accel*time.pow<2>();
+  result.dist_ = second_to_last.dist_-0.5*accel*time.pow<2>()-second_to_last.speed_*time;
   return result;
 }
 
