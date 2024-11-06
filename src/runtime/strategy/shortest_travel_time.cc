@@ -142,7 +142,7 @@ std::vector<drive_event> get_events(train_state const initial,
       current.speed_ = current_command->speed_;
       current_command += 1;
     }
-    if(std::next(current_command)==std::end(commands)&&record.dist_>current.dist_+current_command->dist_){
+    if(std::next(current_command)==std::end(commands)&&record.dist_-(current.dist_+current_command->dist_)>si::length(FP_PRECISION<double>)){
       std::cout<<(current_command->dist_+current.dist_>=interval.end_distance())<<std::endl;
       throw std::logic_error("record past last command");
     }

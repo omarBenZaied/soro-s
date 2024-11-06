@@ -17,17 +17,20 @@
 #include <soro/infrastructure/parsers/iss/parse_track_element.h>
 #include <soro/runtime/physics/rk4/detail/get_speed_limit.h>
 #include <test/file_paths.h>
+#include <test/tpe_runtime/tpe_arrival_factor.h>
 
 #include "soro/runtime/common/train_path_envelope.h"
 
 #include "soro/exceptions/tpe_exceptions.h"
 
 #include "test/tpe_runtime/tpe_simulation_utls.h"
+#include "test/tpe_runtime/tpe_arrival_factor.h"
 namespace soro::tpe_simulation{
 using namespace runtime;
 using namespace infra;
 using namespace test;
-using tpe_changer = tpe_point(tpe_point const&);
+//using tpe_changer = tpe_point(tpe_point const&);
+using tpe_changer = std::function<tpe_point(tpe_point const&)>;
 using tpe_maker = tpe_points(tt::train const&,infrastructure const&,infra::type_set const&);
 TEST_SUITE("tpe respecting travel suite") {
   train_state drive_to_point(train_state state,interval& interval,tt::train const& t,tpe_point const& point) {
@@ -42,10 +45,9 @@ TEST_SUITE("tpe respecting travel suite") {
     return state;
   }
   void check_tpe_respecting_simulation(vector<tt::train> const& trains,infra::infrastructure const& infra,infra::type_set const& record_types,tpe_changer tpe_changer,tpe_maker tpe_maker){
-    bool did_not_throw = false;
     for(auto const& t : trains) {
       auto tpe_points = tpe_maker(t,infra,record_types);
-      for(int i=0;i<tpe_points.size();++i) tpe_points[i] = tpe_changer(tpe_points[i]);
+      for(int i=1;i<tpe_points.size();++i) tpe_points[i] = tpe_changer(tpe_points[i]);
       train_state state;
       state.speed_ = t.start_speed_;
       tt::train::trip const trip(tt::train::trip::id{0}, t.id_, ZERO<absolute_time>);
@@ -53,18 +55,15 @@ TEST_SUITE("tpe respecting travel suite") {
       increase_time::train_drive drive;
       try {
         std::tie(result,drive) = tpe_respecting_simulation(tpe_points,state,nullptr,t,trip,infra,record_types);
-        did_not_throw = true;
       }
       catch(tpe_l_time_exception const& e) {
-        std::cout<<"Threw l_time exception"<<std::endl;
-        auto it = utls::find_if(e.intr_points_,[e](interval_point const& intr_point){return intr_point.distance_ ==e.state_.dist_;});
+        auto it = utls::find_if(e.intr_points_,[e](interval_point const& intr_point){return intr_point.distance_ == e.state_.dist_;});
         interval interval(&*it,&*(it+1));
         auto point_state = drive_to_point(e.state_,interval,t,e.point_);
         utls::sassert(point_state.time_>e.point_.l_time_,"tpe respecting travel threw l_time exception when it shouldnt have");
         continue;
       }
       catch(tpe_speed_exception const& e) {
-        std::cout<<"Threw speed exception"<<std::endl;
         utls::sassert(e.state_.dist_.is_zero(),"tpe speed exception after the beginning");
         interval interval(e.intr_points_.data(),e.intr_points_.data()+1);
         auto point_state = drive_to_point(e.state_,interval,t,e.point_);
@@ -85,6 +84,12 @@ TEST_SUITE("tpe respecting travel suite") {
         CHECK_EQ(tpe_points[i].distance_,result[i].dist_);
 
         CHECK_LE(result[i].speed_,tpe_points[i].v_max_);
+        if(result[i].speed_<tpe_points[i].v_min_) {
+          std::cout<<result[i].dist_<<std::endl;
+          std::cout<<tpe_points[i].distance_<<std::endl;
+          std::cout<<tpe_points[i].v_min_<<std::endl;
+          throw std::logic_error("It happened");
+        }
         CHECK_GE(result[i].speed_,tpe_points[i].v_min_);
 
         auto predecessor_time = i==0?si::time::zero():result[i-1].time_;
@@ -97,7 +102,6 @@ TEST_SUITE("tpe respecting travel suite") {
 
       utls::for_each(drive.phases_,[](vector<train_state> const& phase){CHECK_EQ(phase.size(),2);});
     }
-    utls::sassert(did_not_throw,"threw for every train");
   }
   void check_slowest_drive(vector<tt::train> const& trains,infrastructure const& infra,type_set const& record_types) {
     for(auto const& t:trains) {
@@ -169,7 +173,7 @@ TEST_SUITE("tpe respecting travel suite") {
     check_slowest_drive(tt->trains_,infra,type_set({type::HALT,type::EOTD}));
   }
 
-  TEST_CASE("tpe respecting travel hill") {
+  TEST_CASE("tpe respecting travel hill normal") {
     infrastructure const infra(test::HILL_OPTS);
     tt::timetable const tt(test::HILL_TT_OPTS, infra);
     vector<tt::train> trains{tt->trains_.begin(),tt->trains_.end()-1};
@@ -177,7 +181,7 @@ TEST_SUITE("tpe respecting travel suite") {
     check_tpe_respecting_simulation(trains,infra,type_set({type::HALT,type::EOTD}),identity,get_tpe_points);
   }
 
-  TEST_CASE("tpe respecting travel intersection") {
+  TEST_CASE("tpe respecting travel intersection normal") {
     infrastructure const infra(test::INTER_OPTS);
     tt::timetable const tt(test::INTER_TT_OPTS, infra);
     vector<tt::train> trains{tt->trains_[0]};
@@ -185,9 +189,10 @@ TEST_SUITE("tpe respecting travel suite") {
     check_tpe_respecting_simulation(trains,infra,type_set({type::HALT,type::EOTD}),identity,get_tpe_points);
   }
 
-  TEST_CASE("tpe respecting travel follow") {
+  TEST_CASE("tpe respecting travel follow normal") {
     infrastructure const infra(SMALL_OPTS);
     tt::timetable const tt(FOLLOW_OPTS, infra);
+    //here we need to do this, otherwise, all trains have undrivable tpes
     auto l_time_increaser = [](tpe_point const& pt) {
       tpe_point point(pt);
       point.l_time_ = si::time::infinity();
@@ -196,17 +201,183 @@ TEST_SUITE("tpe respecting travel suite") {
     check_tpe_respecting_simulation(tt->trains_,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),l_time_increaser,get_tpe_points);
   }
 
-  TEST_CASE("tpe respecting travel cross") {
+  TEST_CASE("tpe respecting travel cross normal") {
     auto const infra =
         utls::try_deserializing<infrastructure>("small_opts.raw", SMALL_OPTS);
     auto const tt =
         utls::try_deserializing<tt::timetable>("cross_opts.raw", CROSS_OPTS, infra);
+    //here we need to do this, otherwise, all trains have undrivable tpes
     auto l_time_increaser = [](tpe_point const& pt) {
       tpe_point point(pt);
       point.l_time_ = si::time::infinity();
       return point;
     };
     check_tpe_respecting_simulation(tt->trains_,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),l_time_increaser,get_tpe_points);
+  }
+
+  TEST_CASE("tpe respecting travel hill decreased l_time") {
+    infrastructure const infra(test::HILL_OPTS);
+    tt::timetable const tt(test::HILL_TT_OPTS, infra);
+    vector<tt::train> trains{tt->trains_.begin(),tt->trains_.end()-1};
+    auto l_time_reducer = [](tpe_point const& pt) {
+      tpe_point point(pt);
+      point.l_time_ = si::time::zero();
+      return point;
+    };
+    check_tpe_respecting_simulation(trains,infra,type_set({type::HALT,type::EOTD}),l_time_reducer,get_tpe_points);
+  }
+
+  TEST_CASE("tpe respecting travel intersection decreased l_time") {
+    infrastructure const infra(test::INTER_OPTS);
+    tt::timetable const tt(test::INTER_TT_OPTS, infra);
+    vector<tt::train> trains{tt->trains_[0]};
+    auto l_time_reducer = [](tpe_point const& pt) {
+      tpe_point point(pt);
+      point.l_time_ = si::time::zero();
+      return point;
+    };
+    check_tpe_respecting_simulation(trains,infra,type_set({type::HALT,type::EOTD}),l_time_reducer,get_tpe_points);
+  }
+
+  TEST_CASE("tpe respecting travel follow decreased l_time") {
+    infrastructure const infra(SMALL_OPTS);
+    tt::timetable const tt(FOLLOW_OPTS, infra);
+    auto l_time_reducer = [](tpe_point const& pt) {
+      tpe_point point(pt);
+      point.l_time_ = si::time::zero();
+      return point;
+    };
+    check_tpe_respecting_simulation(tt->trains_,infra,type_set({type::HALT,type::EOTD}),l_time_reducer,get_tpe_points);
+  }
+
+  TEST_CASE("tpe respecting travel cross decreased l_time") {
+    auto const infra =
+        utls::try_deserializing<infrastructure>("small_opts.raw", SMALL_OPTS);
+    auto const tt =
+        utls::try_deserializing<tt::timetable>("cross_opts.raw", CROSS_OPTS, infra);
+    auto l_time_reducer = [](tpe_point const& pt) {
+      tpe_point point(pt);
+      point.l_time_ = si::time::zero();
+      return point;
+    };
+    check_tpe_respecting_simulation(tt->trains_,infra,type_set({type::HALT,type::EOTD}),l_time_reducer,get_tpe_points);
+  }
+
+  TEST_CASE("tpe respecting travel hill increased e_time") {
+    infrastructure const infra(test::HILL_OPTS);
+    tt::timetable const tt(test::HILL_TT_OPTS, infra);
+    vector<tt::train> trains{tt->trains_.begin(),tt->trains_.end()-1};
+    auto e_time_increaser = [](tpe_point const& pt) {
+      tpe_point point(pt);
+      point.e_time_ = pt.e_time_*increase_time::ARRIVAL_FACTOR;
+      return point;
+    };
+    check_tpe_respecting_simulation(trains,infra,type_set({type::HALT,type::EOTD}),e_time_increaser,get_tpe_points);
+  }
+
+  TEST_CASE("tpe respecting travel intersection increased e_time") {
+    infrastructure const infra(test::INTER_OPTS);
+    tt::timetable const tt(test::INTER_TT_OPTS, infra);
+    vector<tt::train> trains{tt->trains_[0]};
+    auto e_time_increaser = [](tpe_point const& pt) {
+      tpe_point point(pt);
+      point.e_time_ = pt.e_time_*increase_time::ARRIVAL_FACTOR;
+      return point;
+    };
+    check_tpe_respecting_simulation(trains,infra,type_set({type::HALT,type::EOTD}),e_time_increaser,get_tpe_points);
+  }
+
+  TEST_CASE("tpe respecting travel follow increased e_time") {
+    infrastructure const infra(SMALL_OPTS);
+    tt::timetable const tt(FOLLOW_OPTS, infra);
+    auto e_time_increaser = [](tpe_point const& pt) {
+      tpe_point point(pt);
+      point.e_time_ = pt.e_time_*increase_time::ARRIVAL_FACTOR;
+      return point;
+    };
+    check_tpe_respecting_simulation(tt->trains_,infra,type_set({type::HALT,type::EOTD}),e_time_increaser,get_tpe_points);
+  }
+
+  TEST_CASE("tpe respecting travel cross increased e_time") {
+    auto const infra =
+        utls::try_deserializing<infrastructure>("small_opts.raw", SMALL_OPTS);
+    auto const tt =
+        utls::try_deserializing<tt::timetable>("cross_opts.raw", CROSS_OPTS, infra);
+    auto e_time_increaser = [](tpe_point const& pt) {
+      tpe_point point(pt);
+      point.e_time_ = pt.e_time_*increase_time::ARRIVAL_FACTOR;
+      return point;
+    };
+    check_tpe_respecting_simulation(tt->trains_,infra,type_set({type::HALT,type::EOTD}),e_time_increaser,get_tpe_points);
+  }
+
+  TEST_CASE("tpe respecting travel hill increased v_min") {
+    infrastructure const infra(test::HILL_OPTS);
+    tt::timetable const tt(test::HILL_TT_OPTS, infra);
+    vector<tt::train> trains{tt->trains_.begin(),tt->trains_.end()-1};
+    for(auto const& t:trains) {
+      auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
+      auto max_speed_reducer = [intervals](tpe_point const& pt) {
+        auto point_interval = std::find_if(intervals.begin(),intervals.end(),[pt](interval const& interval) {return interval.end_distance()==pt.distance_;});
+        if(point_interval.sequence_point().has_value()&&point_interval.sequence_point().value()->is_halt()) return pt;
+        tpe_point point(pt);
+        point.v_min_ = si::speed(5);
+        return point;
+      };
+      check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
+    }
+  }
+
+  TEST_CASE("tpe respecting travel intersection increased v_min") {
+    infrastructure const infra(test::INTER_OPTS);
+    tt::timetable const tt(test::INTER_TT_OPTS, infra);
+    auto t = tt->trains_.front();
+    auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
+    auto max_speed_reducer = [intervals](tpe_point const& pt) {
+      auto point_interval = std::find_if(intervals.begin(),intervals.end(),[pt](interval const& interval) {return interval.end_distance()==pt.distance_;});
+      if(point_interval.sequence_point().has_value()) return pt;
+      tpe_point point(pt);
+      point.v_min_ = si::speed(5);
+      return point;
+    };
+    check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
+  }
+
+  TEST_CASE("tpe respecting travel follow increased v_min") {
+    infrastructure const infra(SMALL_OPTS);
+    tt::timetable const tt(FOLLOW_OPTS, infra);
+    for(auto const& t:tt->trains_) {
+      auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
+      auto max_speed_reducer = [intervals](tpe_point const& pt) {
+        auto point_interval = std::find_if(intervals.begin(),intervals.end(),[pt](interval const& interval) {return interval.end_distance()==pt.distance_;});
+        if(pt.distance_.is_zero()||point_interval!=intervals.end()&&
+          point_interval.sequence_point().has_value()&&point_interval.sequence_point().value()->is_halt()) return pt;
+        tpe_point point(pt);
+        point.v_min_ = si::speed(5);
+        return point;
+      };
+      check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
+    }
+  }
+
+  TEST_CASE("tpe respecting travel cross increased v_min") {
+    auto const infra =
+        utls::try_deserializing<infrastructure>("small_opts.raw", SMALL_OPTS);
+    auto const tt =
+        utls::try_deserializing<tt::timetable>("cross_opts.raw", CROSS_OPTS, infra);
+    vector<tt::train> trains{tt->trains_[0]};
+    for(auto const& t:trains) {
+      auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
+      auto max_speed_reducer = [intervals](tpe_point const& pt) {
+        auto point_interval = std::find_if(intervals.begin(),intervals.end(),[pt](interval const& interval) {return interval.end_distance()==pt.distance_;});
+        if(pt.distance_.is_zero()||point_interval!=intervals.end()&&
+          point_interval.sequence_point().has_value()&&point_interval.sequence_point().value()->is_halt()) return pt;
+        tpe_point point(pt);
+        point.v_min_ = si::speed(5);
+        return point;
+      };
+      check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
+    }
   }
 
 }

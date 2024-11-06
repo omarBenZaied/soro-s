@@ -104,8 +104,18 @@ void merge_duplicate_tpe_points(tpe_points& points){
  */
 std::tuple<train_state,int> find_intersection(vector<train_state> brake_states, vector<train_state> accel_states,interval interval,rs::train_physics const& tp){
   int i=0;
-  for(;i<brake_states.size()&&brake_states[i].dist_!=accel_states.back().dist_;++i){}
+  utls::sassert(brake_states.back().dist_>=accel_states.back().dist_,"No intersection can exist");
+  for(;i<brake_states.size()&&brake_states[i].dist_<accel_states.back().dist_;++i){}
   if(i==brake_states.size()) return {train_state{},-1};
+  if(brake_states[i].dist_>accel_states.back().dist_) {
+    auto prev_state = brake_states[i-1];
+    while(interval.start_distance()!=prev_state.dist_) ++interval;
+    auto deaccel = tp.braking_deaccel(interval.infra_limit(),interval.bwp_limit(),interval.brake_path_length());
+    auto delta = rk4::brake_over_distance(prev_state.speed_,deaccel,accel_states.back().dist_-prev_state.dist_);
+    prev_state+=delta;
+    prev_state.speed_ = delta.speed_;
+    brake_states.insert(brake_states.begin()+i,prev_state);
+  }
   int j=0;
   for(;j+i<brake_states.size();++j){
     if(brake_states[i+j].speed_==accel_states[accel_states.size()-1-j].speed_) return {brake_states[i+j],i+j};
@@ -115,7 +125,8 @@ std::tuple<train_state,int> find_intersection(vector<train_state> brake_states, 
   }
   if(j+i==brake_states.size()) return {train_state{},-1};
   auto distance = brake_states[i+j].dist_;
-  while(interval.start_distance()!=distance) ++interval;
+  while(interval.start_distance()<distance) ++interval;
+  if(interval.start_distance()>distance) --interval;
   return {b_a_intersection::brake_accel_intersection(brake_states[i+j],accel_states[accel_states.size()-1-j],interval,tp),i+j};
 }
 
@@ -149,7 +160,7 @@ vector<train_state> slowest_drive(train_state initial, tpe_point const& pt, inte
   auto corresponding_brake_index = 0;
   bool lines_overlap = false;
   while((initial.speed_.is_positive()||final_state.speed_.is_positive())&&!check_intersection(initial,final_state,accel_states[corresponding_accel_index],brake_states[corresponding_brake_index])){
-    utls::sassert(!lines_overlap||initial.dist_==accel_states[corresponding_accel_index].dist_,"Brake state and corresponding accel state dont have same distance");
+    utls::sassert(!lines_overlap||initial.dist_>=accel_states[corresponding_accel_index].dist_,"Brake state and corresponding accel state dont have same distance");
     if(!lines_overlap) corresponding_accel_index = accel_states.size()-1;
     while(initial.dist_<pt.distance_&&initial.speed_.is_positive()&&initial.speed_>=accel_states[corresponding_accel_index].speed_){
       if(interval.length().is_zero()) {
@@ -169,11 +180,12 @@ vector<train_state> slowest_drive(train_state initial, tpe_point const& pt, inte
       if(!lines_overlap&&initial.dist_==final_state.dist_){
         lines_overlap=true;
         corresponding_brake_index = brake_states.size()-1;
+        //if(initial.dist_>final_state.dist_) corresponding_accel_index = accel_states.size()-2;
       }
     }
     if(initial.dist_==pt.distance_&&initial.speed_>pt.v_max_) throw std::logic_error("Braking in slowest_drive still results in speed greater then v_max_");
     if(initial.dist_==pt.distance_&&initial.speed_>=pt.v_min_) return brake_states;
-    utls::sassert(!lines_overlap||final_state.dist_==brake_states[corresponding_brake_index].dist_,"Accel state and corresponding brake state dont have same distance");
+    utls::sassert(!lines_overlap||final_state.dist_<=brake_states[corresponding_brake_index].dist_,"Accel state and corresponding brake state dont have same distance");
     if(!lines_overlap) corresponding_brake_index=brake_states.size()-1;
     while(final_state.dist_>start_distance&&final_state.speed_.is_positive()&&final_state.speed_>=brake_states[corresponding_brake_index].speed_){
       if(end_interval.length().is_zero()) {
@@ -189,6 +201,7 @@ vector<train_state> slowest_drive(train_state initial, tpe_point const& pt, inte
       if(!lines_overlap&&final_state.dist_==initial.dist_) {
         lines_overlap = true;
         corresponding_accel_index = accel_states.size()-1;
+        //if(final_state.dist_<initial.dist_) corresponding_brake_index = brake_states.size()-2;
       }
     }
     if(final_state.dist_==start_distance&&final_state.speed_>start_speed) throw std::logic_error("Cant accelerate from initial speed to minimum speed");
@@ -363,6 +376,7 @@ si::speed get_max_valid_speed(tpe_point const& start_point,tpe_point const& end_
 
 void fix_max_tpe_speeds(tpe_points& points,intervals const& intervals,tt::train const& t,int const& max_count) {
   for(auto i = points.size()-1;i>1;--i) {
+    if(points[i].e_time_.is_infinity()) throw std::logic_error("An infinite e_time_ doesnt make sense");
     auto speed = get_max_valid_speed(points[i-1],points[i],intervals,t,max_count);
     points[i-1].v_max_ = std::min(speed,points[i-1].v_max_);
   }
@@ -403,16 +417,6 @@ std::tuple<vector<train_state>,increase_time::train_drive> tpe_respecting_simula
     auto og_time = current_state.time_;
     current_state.time_ = si::time::zero();
     bool speed_changed = false;
-    /*if(i+1<tpe_points.size()&&!check_slowest_drive(current_state,tpe_points[i+1],interval,train.physics_)){
-      speed_changed = true;
-      while(interval.end_distance()!=tpe_points[i+1].distance_) ++interval;
-      auto max_allowed_speed = get_max_allowed_speed(end_point.distance_,tpe_points[i+1],interval,train.physics_,tpe_points[i+1].e_time_);
-      end_point.v_max_ = max_allowed_speed;
-      auto prev_state = result.back();
-      prev_state.time_ = si::time::zero();
-      while(interval.start_distance()!=prev_state.dist_) --interval;
-      std::tie(current_state,delta_drive) = get_end_state(prev_state,end_point,interval,train_safety,train,trip,prev_e_time);
-    }*/
     if(!speed_changed) current_state.time_ = og_time;
     if(current_state.time_<end_point.e_time_){
       increase_time::increase_time(delta_drive,end_point,train.physics_,intervals.p_,increase_time::standard_next_offset);

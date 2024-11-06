@@ -56,7 +56,7 @@ inline train_state brake_accel_intersection(train_state const& brake_state,
       "Decceleration is not negative, no brake_accel_intersection can be calculated");
   //TODO: SOURCE?
   auto result_speed =
-      (s_a - s_b - v_a.pow<2>() / (2 * a_a) + v_b.pow<2>() / (2 * a_b)) /
+      -(s_a - s_b - v_a.pow<2>() / (2 * a_a) + v_b.pow<2>() / (2 * a_b)) /
       (1 / (2 * a_a) - 1 / (2 * a_b));
   soro::utls::sassert(!result_speed.is_negative(), "Intersection doesnt exist");
   train_state state;
