@@ -365,8 +365,7 @@ TEST_SUITE("tpe respecting travel suite") {
         utls::try_deserializing<infrastructure>("small_opts.raw", SMALL_OPTS);
     auto const tt =
         utls::try_deserializing<tt::timetable>("cross_opts.raw", CROSS_OPTS, infra);
-    vector<tt::train> trains{tt->trains_[0]};
-    for(auto const& t:trains) {
+    for(auto const& t:tt->trains_) {
       auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
       auto max_speed_reducer = [intervals](tpe_point const& pt) {
         auto point_interval = std::find_if(intervals.begin(),intervals.end(),[pt](interval const& interval) {return interval.end_distance()==pt.distance_;});

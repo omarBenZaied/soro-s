@@ -169,11 +169,12 @@ vector<train_state> slowest_drive(train_state initial, tpe_point const& pt, inte
       }
       auto deaccel = tp.braking_deaccel(interval.infra_limit(), interval.bwp_limit(),
                                         interval.brake_path_length());
-      auto delta = rk4::brake_over_distance(initial.speed_,deaccel,interval.length());
+      auto target_dist = initial.dist_>=final_state.dist_?interval.end_distance():std::min(interval.end_distance(),final_state.dist_);
+      auto delta = rk4::brake_over_distance(initial.speed_,deaccel,target_dist-initial.dist_);
       initial+=delta;
       initial.speed_ = delta.speed_;
       brake_states.push_back(initial);
-      ++interval;
+      if(initial.dist_==interval.end_distance()) ++interval;
       if(lines_overlap){
         --corresponding_accel_index;
       }
@@ -192,9 +193,10 @@ vector<train_state> slowest_drive(train_state initial, tpe_point const& pt, inte
         --end_interval;
         continue;
       }
-      final_state = rk4::accelerate_backwards(final_state,end_interval,tp);
+      auto target_dist = final_state.dist_<=initial.dist_?end_interval.start_distance():std::max(end_interval.start_distance(),initial.dist_);
+      final_state = rk4::accelerate_backwards(final_state,end_interval,target_dist,tp);
       accel_states.push_back(final_state);
-      --end_interval;
+      if(final_state.dist_==end_interval.start_distance())--end_interval;
       if(lines_overlap){
         --corresponding_brake_index;
       }
@@ -221,7 +223,8 @@ vector<train_state> slowest_drive(train_state initial, tpe_point const& pt, inte
   std::reverse(accel_states.begin(),accel_states.end());
   brake_states.erase(brake_states.begin()+index+1,brake_states.end());
   brake_states.insert(brake_states.end(),accel_states.begin(),accel_states.end());
-  while(start_interval.start_distance()!=brake_states[index].dist_) ++start_interval;
+  while(start_interval.start_distance()<brake_states[index].dist_) ++start_interval;
+  if(start_interval.start_distance()>brake_states[index].dist_) --start_interval;
   auto time_offset = get_offset_time(brake_states[index],state.speed_,start_interval,tp);
   for(int i=index+1;i<brake_states.size();++i)brake_states[i].time_+=time_offset;
   auto binary_pred = [](train_state s1,train_state s2){return s1.dist_==s2.dist_&&s1.speed_==s2.speed_;};
@@ -240,7 +243,7 @@ si::speed get_max_allowed_speed(si::length const& distance,tpe_point const& pt,i
   state.speed_ = pt.v_min_;
   utls::sassert(state.dist_ == interval.end_distance(),"get_max_allowed_speed expected {}, but got {}",pt.distance_,interval.end_distance());
   while(state.speed_.is_positive()&&state.dist_>distance){
-    state = rk4::accelerate_backwards(state,interval,tp);
+    state = rk4::accelerate_backwards(state,interval,interval.start_distance(),tp);
     if(state.dist_==interval.start_distance())--interval;
   }
   utls::sassert(state.dist_>=distance,"state got backwards simulated too far get_max_allowed_speed");
@@ -259,7 +262,7 @@ si::speed get_max_allowed_speed(si::length const& distance,tpe_point const& pt,i
 }
 si::speed get_min_allowed_speed(si::length const& distance, interval interval,train_state& state,rs::train_physics const& tp){
   while(state.dist_!=distance&&state.speed_.is_positive()){
-    state = soro::runtime::rk4::accelerate_backwards(state,interval,tp);
+    state = soro::runtime::rk4::accelerate_backwards(state,interval,interval.start_distance(),tp);
     --interval;
   }
   return state.speed_;

@@ -194,18 +194,19 @@ train_state get_backwards_intersection_at_max_speed(si::speed const& speed,train
   result.dist_ = second_to_last.dist_-step.dist_;
   return result;
 }
-train_state accelerate_backwards(train_state initial_state,interval const& interval,rs::train_physics const& tp){
-  utls::sassert(initial_state.dist_==interval.end_distance(),"state doesnt start at end of interval in backwards acceleration");
+train_state accelerate_backwards(train_state initial_state,interval const& interval,si::length const& min_dist,rs::train_physics const& tp){
+  utls::sassert(initial_state.dist_<=interval.end_distance(),"state doesnt start at end of interval in backwards acceleration");
+  utls::sassert(initial_state.dist_>min_dist,"start state is after or at min dist");
   auto slope = interval.slope();
   auto max_speed = interval.speed_limit(tp);
   train_state last;
-  while(initial_state.dist_>interval.start_distance()&&initial_state.speed_<max_speed&&initial_state.speed_.is_positive()){
+  while(initial_state.dist_>min_dist&&initial_state.speed_<max_speed&&initial_state.speed_.is_positive()){
     //TODO:: das hier ist generaliserbar
     last = initial_state;
     initial_state-=rk4_step(initial_state.speed_, delta_t, slope, tp);
   }
-  if(initial_state.dist_<interval.start_distance()){
-    initial_state = detail::get_intersection_at_max_dist(interval.start_distance(), initial_state, last,
+  if(initial_state.dist_<min_dist){
+    initial_state = detail::get_intersection_at_max_dist(min_dist, initial_state, last,
                                                   slope, tp);
   }
   if(initial_state.speed_.is_negative()){

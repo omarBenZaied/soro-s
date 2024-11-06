@@ -20,7 +20,7 @@ soro::vector<train_state> accelerate_with_states(si::speed const initial_speed, 
                                                  si::accel const deaccel, si::slope const slope,
                                                  si::length const stop_at, rs::train_physics const& tp);
 
-train_state accelerate_backwards(train_state initial_state,interval const& interval ,rs::train_physics const& tp);
+train_state accelerate_backwards(train_state initial_state,interval const& interval,si::length const& min_dist,rs::train_physics const& tp);
 
 
 }  // namespace soro::runtime::rk4
