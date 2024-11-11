@@ -25,6 +25,7 @@
 
 #include "test/tpe_runtime/tpe_simulation_utls.h"
 #include "test/tpe_runtime/tpe_arrival_factor.h"
+#include "soro/runtime/physics/rk4/detail/get_speed_limit.h"
 namespace soro::tpe_simulation{
 using namespace runtime;
 using namespace infra;
@@ -373,6 +374,86 @@ TEST_SUITE("tpe respecting travel suite") {
           point_interval.sequence_point().has_value()&&point_interval.sequence_point().value()->is_halt()) return pt;
         tpe_point point(pt);
         point.v_min_ = si::speed(5);
+        return point;
+      };
+      check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
+    }
+  }
+
+  TEST_CASE("tpe respecting travel hill decreased v_max") {
+    infrastructure const infra(test::HILL_OPTS);
+    tt::timetable const tt(test::HILL_TT_OPTS, infra);
+    vector<tt::train> trains{tt->trains_.begin(),tt->trains_.end()-1};
+    for(auto const& t:trains) {
+      auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
+      auto max_speed_reducer = [intervals,t](tpe_point const& pt) {
+        auto interval_point = std::ranges::find_if(intervals.p_,[pt](struct interval_point const& point){return point.distance_>=pt.distance_;});
+        interval interval(&*(interval_point-1),&*interval_point);
+        auto deaccel = t.physics_.braking_deaccel(interval.infra_limit(),interval.bwp_limit(),interval.brake_path_length());
+        rk4::get_speed_limit get_speed_limit(interval.length(),t.physics_.max_speed(interval.speed_limit()),interval.target_speed(t.physics_),deaccel);
+        auto speed = get_speed_limit(pt.distance_-interval.start_distance());
+        tpe_point point(pt);
+        point.v_max_ = speed*0.9;
+        return point;
+      };
+      check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
+    }
+  }
+
+  TEST_CASE("tpe respecting travel intersection decreased v_max") {
+    infrastructure const infra(test::INTER_OPTS);
+    tt::timetable const tt(test::INTER_TT_OPTS, infra);
+    auto t = tt->trains_.front();
+    auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
+    auto max_speed_reducer = [intervals,t](tpe_point const& pt) {
+      auto interval_point = std::ranges::find_if(intervals.p_,[pt](struct interval_point const& point){return point.distance_>=pt.distance_;});
+      interval interval(&*(interval_point-1),&*interval_point);
+      auto deaccel = t.physics_.braking_deaccel(interval.infra_limit(),interval.bwp_limit(),interval.brake_path_length());
+      rk4::get_speed_limit get_speed_limit(interval.length(),t.physics_.max_speed(interval.speed_limit()),interval.target_speed(t.physics_),deaccel);
+      auto speed = get_speed_limit(pt.distance_-interval.start_distance());
+      tpe_point point(pt);
+      point.v_max_ = speed*0.9;
+      return point;
+    };
+    check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
+  }
+
+  TEST_CASE("tpe respecting travel follow decreased v_max") {
+    infrastructure const infra(SMALL_OPTS);
+    tt::timetable const tt(FOLLOW_OPTS, infra);
+    for(auto const& t:tt->trains_) {
+      auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
+      auto max_speed_reducer = [intervals,t](tpe_point const& pt) {
+        if(pt.distance_.is_zero()) return pt;
+        auto interval_point = std::ranges::find_if(intervals.p_,[pt](struct interval_point const& point){return point.distance_>=pt.distance_;});
+        interval interval(&*(interval_point-1),&*interval_point);
+        auto deaccel = t.physics_.braking_deaccel(interval.infra_limit(),interval.bwp_limit(),interval.brake_path_length());
+        rk4::get_speed_limit get_speed_limit(interval.length(),t.physics_.max_speed(interval.speed_limit()),interval.target_speed(t.physics_),deaccel);
+        auto speed = get_speed_limit(pt.distance_-interval.start_distance());
+        tpe_point point(pt);
+        point.v_max_ = speed*0.9;
+        return point;
+      };
+      check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
+    }
+  }
+
+  TEST_CASE("tpe respecting travel cross decreased v_max") {
+    auto const infra =
+        utls::try_deserializing<infrastructure>("small_opts.raw", SMALL_OPTS);
+    auto const tt =
+        utls::try_deserializing<tt::timetable>("cross_opts.raw", CROSS_OPTS, infra);
+    for(auto const& t:tt->trains_) {
+      auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
+      auto max_speed_reducer = [intervals,t](tpe_point const& pt) {
+        if(pt.distance_.is_zero()) return pt;
+        auto interval_point = std::ranges::find_if(intervals.p_,[pt](struct interval_point const& point){return point.distance_>=pt.distance_;});
+        interval interval(&*(interval_point-1),&*interval_point);
+        auto deaccel = t.physics_.braking_deaccel(interval.infra_limit(),interval.bwp_limit(),interval.brake_path_length());
+        rk4::get_speed_limit get_speed_limit(interval.length(),t.physics_.max_speed(interval.speed_limit()),interval.target_speed(t.physics_),deaccel);
+        auto speed = get_speed_limit(pt.distance_-interval.start_distance());
+        tpe_point point(pt);
+        point.v_max_ = speed*0.9;
         return point;
       };
       check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
