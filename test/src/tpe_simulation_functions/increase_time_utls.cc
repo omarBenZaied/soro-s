@@ -234,7 +234,7 @@ void test_check_function(vector<tt::train> const& trains,infra::infrastructure c
     auto intervals = split_intervals(
         get_intervals(t, record_types, infra), tpe_points, t.physics_);
     train_state current;
-    current.time_ = si::time::zero();//si::time(t.start_time_.count());
+    current.time_ = si::time::zero();
     current.dist_ = si::length::zero();
     current.speed_ = t.start_speed_;
     train_drive drive;
@@ -251,6 +251,7 @@ void test_check_function(vector<tt::train> const& trains,infra::infrastructure c
         tpe_points[point_index].l_time_ = std::max(tpe_points[point_index].l_time_,tpe_points[point_index].e_time_);
         test_function(drive,tpe_points[point_index],intervals.p_,t);
         drive.erase_elements(0, drive.phases_.size());
+        current.time_ = si::time::zero();
         drive.start_state_ = current;
         ++point_index;
       }

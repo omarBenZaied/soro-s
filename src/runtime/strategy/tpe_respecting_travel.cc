@@ -23,6 +23,22 @@ using namespace soro::runtime;
 using namespace soro::train_path_envelope;
 using namespace soro;
 
+std::chrono::microseconds elapsed_increase_time_microseconds;
+int increase_time_count;
+void reset_duration() {
+  elapsed_increase_time_microseconds = std::chrono::microseconds::zero();
+  increase_time_count = 0;
+}
+
+std::chrono::microseconds get_duration() {
+  return elapsed_increase_time_microseconds;
+}
+
+int get_count() {
+  return increase_time_count;
+}
+
+
 /**
  * splits intervals at tpe_points.
  * @param intervals the intervals of the journey
@@ -35,34 +51,34 @@ intervals split_intervals(intervals const& intervals, tpe_points const& pts,rs::
   struct intervals result;
   auto intr_points = intervals.p_;
   intr_points.reserve(intr_points.size()+pts.size());
-  auto it = intr_points.begin();
-  auto it_offset = 0;
   utls::sassert(intr_points.front().distance_<=pts.front().distance_,"TPE_Points before the ride even begins.");
   utls::sassert(intr_points.back().distance_>=pts.back().distance_,"TPE_Points happen after end.");
+  auto it = intr_points.begin();
+  bool changed = false;
   for (auto const& point : pts) {
-    while (it->distance_ < point.distance_) {
-      ++it;
-      ++it_offset;
+    it = std::find_if(it,intr_points.end(),[point](interval_point const& intr_pt) {return intr_pt.distance_>=point.distance_;});
+    if(it->distance_ == point.distance_) continue;
+    changed = true;
+    auto it_offset = it-intr_points.begin();
+    auto& intr_point = *(it - 1);
+    interval_point new_point(intr_point);
+    auto records_it = utls::find_if(intr_point.records_,[point](record const& r){return r.dist_>=point.distance_;});
+    auto records_to_move = soro::vector<record>{records_it,intr_point.records_.end()};
+    intr_point.records_.erase(records_it,intr_point.records_.end());
+    new_point.distance_ = point.distance_;
+    new_point.records_ = records_to_move;
+    new_point.sequence_point_.reset();
+    if(intr_point.next_signal_.has_value()&&intr_point.next_signal_.value().dist_<=point.distance_){
+      new_point.last_signal_ = intr_point.next_signal_;
+      new_point.next_signal_ = it->next_signal_;
     }
-    if (it->distance_ != point.distance_) {
-      auto intr_point = *(it - 1);
-      interval_point new_point(intr_point);
-      auto records_it = utls::find_if((it-1)->records_,[point](record const& r){return r.dist_>=point.distance_;});
-      auto records_to_move = soro::vector<record>{records_it,(it-1)->records_.end()};
-      (it-1)->records_.erase(records_it,(it-1)->records_.end());
-      new_point.distance_ = point.distance_;
-      new_point.records_ = records_to_move;
-      new_point.sequence_point_.reset();
-      if(intr_point.next_signal_.has_value()&&intr_point.next_signal_.value().dist_<=point.distance_){
-        new_point.last_signal_ = intr_point.next_signal_;
-        new_point.next_signal_ = it->next_signal_;
-      }
-      intr_points.insert(it, new_point);
-      it = intr_points.begin()+(++it_offset);
-    }
+    intr_points.insert(it, new_point);
+    it = intr_points.begin()+it_offset+1;
   }
-  for(auto i=intr_points.size()-1;i>0;--i){
-    fix_short_interval(intr_points[i-1],intr_points[i],tp);
+  if(changed) {
+    for(auto i=intr_points.size()-1;i>0;--i){
+      fix_short_interval(intr_points[i-1],intr_points[i],tp);
+    }
   }
   result.p_ = intr_points;
   return result;
@@ -76,9 +92,9 @@ intervals split_intervals(intervals const& intervals, tpe_points const& pts,rs::
  */
 void merge_duplicate_tpe_points(tpe_points& points){
   auto it = points.begin();
-  auto it_offset = 0;
   while(it<(points.end()-1)){
     if(it->distance_==(it+1)->distance_){
+      auto it_offset = it-points.begin();
       auto it2 = it+1;
       auto new_pt = tpe_point(it->distance_,std::max(it->e_time_,it2->e_time_),std::min(it->l_time_,it2->l_time_),std::max(it->v_min_,it2->v_min_),std::min(it->v_max_,it2->v_max_));
       points.erase(it,it+2);
@@ -87,7 +103,6 @@ void merge_duplicate_tpe_points(tpe_points& points){
       it = points.begin()+it_offset;
     }
     else {
-      ++it_offset;
       ++it;
     }
   }
@@ -102,10 +117,10 @@ void merge_duplicate_tpe_points(tpe_points& points){
  * @return the intersection of the processes as well as the index of the last brake_state before the intersection.
  * If no intersection is found, it returns a zero state as well as -1.
  */
-std::tuple<train_state,int> find_intersection(vector<train_state> brake_states, vector<train_state> accel_states,interval interval,rs::train_physics const& tp){
-  int i=0;
+std::tuple<train_state,int> find_intersection(vector<train_state>& brake_states, vector<train_state> const& accel_states,interval interval,rs::train_physics const& tp){
   utls::sassert(brake_states.back().dist_>=accel_states.back().dist_,"No intersection can exist");
-  for(;i<brake_states.size()&&brake_states[i].dist_<accel_states.back().dist_;++i){}
+  int i=0;
+  while(i<brake_states.size()&&brake_states[i].dist_<accel_states.back().dist_) ++i;
   if(i==brake_states.size()) return {train_state{},-1};
   if(brake_states[i].dist_>accel_states.back().dist_) {
     auto prev_state = brake_states[i-1];
@@ -160,7 +175,7 @@ vector<train_state> slowest_drive(train_state initial, tpe_point const& pt, inte
   auto corresponding_brake_index = 0;
   bool lines_overlap = false;
   while((initial.speed_.is_positive()||final_state.speed_.is_positive())&&!check_intersection(initial,final_state,accel_states[corresponding_accel_index],brake_states[corresponding_brake_index])){
-    utls::sassert(!lines_overlap||initial.dist_>=accel_states[corresponding_accel_index].dist_,"Brake state and corresponding accel state dont have same distance");
+    utls::sassert(!lines_overlap||initial.dist_==accel_states[corresponding_accel_index].dist_,"Brake state and corresponding accel state dont have same distance");
     if(!lines_overlap) corresponding_accel_index = accel_states.size()-1;
     while(initial.dist_<pt.distance_&&initial.speed_.is_positive()&&initial.speed_>=accel_states[corresponding_accel_index].speed_){
       if(interval.length().is_zero()) {
@@ -181,12 +196,11 @@ vector<train_state> slowest_drive(train_state initial, tpe_point const& pt, inte
       if(!lines_overlap&&initial.dist_==final_state.dist_){
         lines_overlap=true;
         corresponding_brake_index = brake_states.size()-1;
-        //if(initial.dist_>final_state.dist_) corresponding_accel_index = accel_states.size()-2;
       }
     }
     if(initial.dist_==pt.distance_&&initial.speed_>pt.v_max_) throw std::logic_error("Braking in slowest_drive still results in speed greater then v_max_");
     if(initial.dist_==pt.distance_&&initial.speed_>=pt.v_min_) return brake_states;
-    utls::sassert(!lines_overlap||final_state.dist_<=brake_states[corresponding_brake_index].dist_,"Accel state and corresponding brake state dont have same distance");
+    utls::sassert(!lines_overlap||final_state.dist_==brake_states[corresponding_brake_index].dist_,"Accel state and corresponding brake state dont have same distance");
     if(!lines_overlap) corresponding_brake_index=brake_states.size()-1;
     while(final_state.dist_>start_distance&&final_state.speed_.is_positive()&&final_state.speed_>=brake_states[corresponding_brake_index].speed_){
       if(end_interval.length().is_zero()) {
@@ -203,7 +217,6 @@ vector<train_state> slowest_drive(train_state initial, tpe_point const& pt, inte
       if(!lines_overlap&&final_state.dist_==initial.dist_) {
         lines_overlap = true;
         corresponding_accel_index = accel_states.size()-1;
-        //if(final_state.dist_<initial.dist_) corresponding_brake_index = brake_states.size()-2;
       }
     }
     if(final_state.dist_==start_distance&&final_state.speed_>start_speed) throw std::logic_error("Cant accelerate from initial speed to minimum speed");
@@ -214,13 +227,12 @@ vector<train_state> slowest_drive(train_state initial, tpe_point const& pt, inte
   }
   if(!check_intersection(initial,final_state,accel_states[corresponding_accel_index],brake_states[corresponding_brake_index])){
     return brake_states;
-    //return cruise_to_halt(brake_states,final_state,++end_interval);
   }
   auto [state,index] = find_intersection(brake_states,accel_states,intr_copy,tp);
   utls::sassert(index!=-1,"find_intersection found no intersection even though there should be one");
   std::erase_if(accel_states,[state](train_state const& a_state){return a_state.dist_<=state.dist_;});
   accel_states.push_back(state);
-  std::reverse(accel_states.begin(),accel_states.end());
+  std::ranges::reverse(accel_states);
   brake_states.erase(brake_states.begin()+index+1,brake_states.end());
   brake_states.insert(brake_states.end(),accel_states.begin(),accel_states.end());
   while(start_interval.start_distance()<brake_states[index].dist_) ++start_interval;
@@ -248,7 +260,6 @@ si::speed get_max_allowed_speed(si::length const& distance,tpe_point const& pt,i
   }
   utls::sassert(state.dist_>=distance,"state got backwards simulated too far get_max_allowed_speed");
   if(state.dist_==distance) {
-    //TODO hier muss man unterscheiden, ob man steht
     if(-state.time_<min_allowed_time) throw std::logic_error("TPE is not drivable.");
     return state.speed_;
   }
@@ -260,9 +271,11 @@ si::speed get_max_allowed_speed(si::length const& distance,tpe_point const& pt,i
   ++interval;
   return state.speed_;
 }
-si::speed get_min_allowed_speed(si::length const& distance, interval interval,train_state& state,rs::train_physics const& tp){
+si::speed get_min_allowed_speed(si::length const& distance, intervals const& intervals,train_state& state,rs::train_physics const& tp){
+  auto it = utls::find_if(intervals.p_,[state](interval_point const& intr_pt){return intr_pt.distance_==state.dist_;});
+  interval interval(&*(it-1),&*it);
   while(state.dist_!=distance&&state.speed_.is_positive()){
-    state = soro::runtime::rk4::accelerate_backwards(state,interval,interval.start_distance(),tp);
+    state = rk4::accelerate_backwards(state,interval,interval.start_distance(),tp);
     --interval;
   }
   return state.speed_;
@@ -275,36 +288,15 @@ si::speed get_possible_max_speed(si::length const& distance, interval interval,t
   }
   return state.speed_;
 }
-void fix_tpe_speeds(tpe_points& points,interval interval,rs::train_physics const& tp, train_state const& start_state){
-  while(interval.end_distance()!=points.back().distance_) ++interval;
-  train_state end_state;
-  for(int i=points.size()-1;i>0;--i){
-    end_state.speed_ = points[i].v_min_;
-    end_state.dist_ = points[i].distance_;
-    points[i-1].v_min_ = std::max(points[i-1].v_min_,get_min_allowed_speed(points[i-1].distance_,interval,end_state,tp));
-    end_state.speed_ = points[i].v_max_;
-    end_state.dist_ = points[i].distance_;
-    points[i-1].v_max_ = std::min(points[i-1].v_max_,get_possible_max_speed(points[i-1].distance_,interval,end_state,tp));
-    //Überprüfe, ob ich interval manuell ändern muss
-  }
-  end_state.speed_ = points.front().v_min_;
-  end_state.dist_ = points.front().distance_;
-  auto min_speed = get_min_allowed_speed(start_state.dist_,interval,end_state,tp);
-  if(start_state.speed_<min_speed) throw std::logic_error("speed of start state is too low, tpe is not drivable");
-  auto max_speed = get_possible_max_speed(start_state.dist_,interval,end_state,tp);
-  if(start_state.speed_>max_speed) throw std::logic_error("speed of start is too fast, tpe not drivable");
-}
 
 vector<interval_point> fix_intervals(interval& interval,tpe_point const& point,rs::train_physics const& tp){
   vector<interval_point> new_intervals;
-  while(interval.end_distance()!=point.distance_){
+  while(interval.start_distance()!=point.distance_){
     new_intervals.push_back(*interval.p1_);
     ++interval;
   }
   new_intervals.push_back(*interval.p1_);
-  new_intervals.push_back(*interval.p2_);
-  ++interval;
-  if(new_intervals.back().limit_>point.v_max_){
+  if(tp.max_speed(new_intervals.back().limit_)>point.v_max_){
     new_intervals[new_intervals.size()-1].limit_ = point.v_max_;
     for(auto i=new_intervals.size()-1;i>0;--i) {
       fix_short_interval(new_intervals[i-1],new_intervals[i],tp);
@@ -314,13 +306,12 @@ vector<interval_point> fix_intervals(interval& interval,tpe_point const& point,r
 }
 
 std::tuple<train_state,increase_time::train_drive> get_end_state(train_state current_state,tpe_point const& pt, interval& interval,
-                    train_safety* train_safety,tt::train const& train,tt::train::trip const& trip,si::time const& prev_e_time){
+                    train_safety* train_safety,tt::train const& train,tt::train::trip const& trip){
   signal_time signal_time;
   signal_time.time_ = ZERO<absolute_time>;
   shortest_travel_time shortest_travel_time;
   increase_time::train_drive drive;
   drive.start_state_ = current_state;
-  drive.start_state_.time_ -= prev_e_time;
   auto new_intervals = fix_intervals(interval,pt,train.physics_);
   struct interval fixed_interval = {new_intervals.data(),new_intervals.data()+1};
   auto state_copy = current_state;
@@ -331,8 +322,8 @@ std::tuple<train_state,increase_time::train_drive> get_end_state(train_state cur
     current_state.dist_ = fixed_interval.end_distance();
     if(!drive.phases_.empty())drive.phases_.back().back().dist_ = fixed_interval.end_distance();
     ++fixed_interval;
-    if(current_state.time_-prev_e_time>pt.l_time_) {
-      si::time current_time = current_state.time_-prev_e_time;
+    if(current_state.time_>pt.l_time_) {
+      si::time current_time = current_state.time_;
       auto error_string = fmt::format("TPE-Point at distance {} with latest time {} can't be achieved, reached time {}",pt.distance_,pt.l_time_,current_time);
       throw tpe_l_time_exception(error_string,pt,state_copy,new_intervals);
     }
@@ -342,15 +333,15 @@ std::tuple<train_state,increase_time::train_drive> get_end_state(train_state cur
 
 si::speed get_max_valid_speed(tpe_point const& start_point,tpe_point const& end_point,intervals const& intervals,tt::train const& t,int const& max_count) {
   auto const tp = t.physics_;
-  auto it = utls::find_if(intervals.p_,[end_point](interval_point const& intr_point){return intr_point.distance_==end_point.distance_;});
-  interval interval(&*(it-1),&*it);
-  struct interval copy(interval);
+  auto start_it = utls::find_if(intervals.p_,[start_point](interval_point const& intr_point){return intr_point.distance_==start_point.distance_;});
+  auto end_it = std::find_if(start_it,intervals.p_.end(),[end_point](interval_point const& intr_point){return intr_point.distance_==end_point.distance_;});
+  interval interval(&*(end_it-1),&*end_it);
+  struct interval copy_interval(interval);
   si::speed lower_bound = get_max_allowed_speed(start_point.distance_,end_point,interval,tp,end_point.e_time_);
   train_state backwards_brake_state;
   backwards_brake_state.speed_ = end_point.v_max_;
   backwards_brake_state.dist_ = end_point.distance_;
-  auto max_brake_speed = get_possible_max_speed(start_point.distance_,interval,backwards_brake_state,tp);
-  auto start_it = utls::find_if(intervals.p_,[start_point](interval_point const& intr_point){return intr_point.distance_==start_point.distance_;});
+  auto max_brake_speed = get_possible_max_speed(start_point.distance_,copy_interval,backwards_brake_state,tp);
   auto upper_bound = std::min(start_point.v_max_, tp.max_speed(start_it->limit_));
   upper_bound = std::min(upper_bound,max_brake_speed);
   if(upper_bound<lower_bound) {
@@ -359,7 +350,7 @@ si::speed get_max_valid_speed(tpe_point const& start_point,tpe_point const& end_
     state.dist_ = start_point.distance_;
     train_state copy_state(state);
     tt::train::trip trip(tt::train::trip::id{0}, t.id_, ZERO<absolute_time>);
-    std::tie(state,std::ignore) = get_end_state(state,end_point,interval,nullptr,t,trip,si::time::zero());
+    std::tie(state,std::ignore) = get_end_state(state,end_point,interval,nullptr,t,trip);
     if(state.speed_<end_point.v_min_) throw tpe_speed_exception("Cant reach min speed",end_point,copy_state,intervals.p_);
     return upper_bound;
   }
@@ -377,13 +368,30 @@ si::speed get_max_valid_speed(tpe_point const& start_point,tpe_point const& end_
   return lower_bound;
 }
 
-void fix_max_tpe_speeds(tpe_points& points,intervals const& intervals,tt::train const& t,int const& max_count) {
+/*void fix_max_tpe_speeds(tpe_points& points,intervals const& intervals,tt::train const& t,int const& max_count) {
   for(auto i = points.size()-1;i>1;--i) {
     if(points[i].e_time_.is_infinity()) throw std::logic_error("An infinite e_time_ doesnt make sense");
+    if(points[i].v_max_<points[i].v_min_) throw std::logic_error("TPE is malformed and not drivable");
     auto speed = get_max_valid_speed(points[i-1],points[i],intervals,t,max_count);
     points[i-1].v_max_ = std::min(speed,points[i-1].v_max_);
   }
+  if(points[0].v_max_<points[0].v_min_) throw std::logic_error("TPE is malformed and not drivable");
+  if(points[1].v_max_<points[1].v_min_) throw std::logic_error("TPE is malformed and not drivable");
+}*/
+
+void fix_tpe_speeds(tpe_points& points,intervals const& intervals,tt::train const& t, int const& max_count){
+  if(points.back().v_max_<points.back().v_min_) throw tpe_malformed_exception("TPE not drivable");
+  for(int i=points.size()-1;i>1;--i){
+    train_state end_state;
+    end_state.speed_ = points[i].v_min_;
+    end_state.dist_ = points[i].distance_;
+    points[i-1].v_min_ = std::max(points[i-1].v_min_,get_min_allowed_speed(points[i-1].distance_,intervals,end_state,t.physics_));
+    auto valid_max_speed = get_max_valid_speed(points[i-1],points[i],intervals,t,max_count);
+    points[i-1].v_max_ = std::min(points[i-1].v_max_,valid_max_speed);
+    if(points[i-1].v_max_<points[i-1].v_min_) throw tpe_malformed_exception("TPE not drivable");
+  }
 }
+
 std::tuple<vector<train_state>,increase_time::train_drive> tpe_respecting_simulation(
     tpe_points& tpe_points, train_state const& initial, train_safety* train_safety,
     tt::train const& train, tt::train::trip const& trip,
@@ -395,34 +403,33 @@ std::tuple<vector<train_state>,increase_time::train_drive> tpe_respecting_simula
   utls::sassert(!tpe_points.front().e_time_.is_negative()&&!tpe_points.front().l_time_.is_negative(),"No negative times in tpe");
   merge_duplicate_tpe_points(tpe_points);
   intervals intervals = split_intervals(get_intervals(train, record_types, infra), tpe_points, train.physics_);
-  fix_max_tpe_speeds(tpe_points,intervals,train,10);
+  fix_tpe_speeds(tpe_points,intervals,train,10);
+  if(tpe_points.size()>1&&!check_slowest_drive(initial,tpe_points[1],intervals.begin(),train.physics_)) throw std::logic_error("TPE not drivable");
   vector<train_state> result;
   result.reserve(tpe_points.size());
   result.push_back(initial);
   increase_time::train_drive drive;
   drive.start_state_ = initial;
   auto interval = intervals.begin();
-  //fix_tpe_speeds(tpe_points,interval,train.physics_,initial);
   auto current_state = initial;
   auto offset_time = si::time::zero();
-  auto prev_e_time = si::time::zero();
   for (int i = 1; i < tpe_points.size() ; ++i) {
     auto& end_point = tpe_points[i];
     utls::sassert(!end_point.e_time_.is_negative()&&!end_point.l_time_.is_negative(),"No negative tpe times");
     increase_time::train_drive delta_drive;
-    std::tie(current_state,delta_drive) = get_end_state(current_state,end_point,interval,train_safety,train,trip,prev_e_time);
+    std::tie(current_state,delta_drive) = get_end_state(current_state,end_point,interval,train_safety,train,trip);
     utls::sassert(current_state.dist_==end_point.distance_,"Distance of current_state isnt equal to distance of tpe_point.");
     // this may only happen between the start and the first non zero dist tpe point
     if(current_state.speed_<end_point.v_min_) {
       auto error_string = fmt::format("Minimum speed of {} at distance {} cant be reached",end_point.v_min_,end_point.distance_);
       throw tpe_speed_exception(error_string,end_point,result.back(),intervals.p_);
     }
-    auto og_time = current_state.time_;
-    current_state.time_ = si::time::zero();
-    bool speed_changed = false;
-    if(!speed_changed) current_state.time_ = og_time;
     if(current_state.time_<end_point.e_time_){
+      auto start = std::chrono::high_resolution_clock::now();
       increase_time::increase_time(delta_drive,end_point,train.physics_,intervals.p_,increase_time::standard_next_offset);
+      auto end = std::chrono::high_resolution_clock::now();
+      elapsed_increase_time_microseconds+=std::chrono::duration_cast<std::chrono::microseconds>(end-start);
+      increase_time_count++;
       current_state = delta_drive.phases_.back().back();
     }
     drive+=delta_drive;
@@ -431,8 +438,9 @@ std::tuple<vector<train_state>,increase_time::train_drive> tpe_respecting_simula
     offset_time = relative_time;
     result.push_back(current_state);
     current_state.time_ = si::time::zero();
+    if((interval-1).ends_on_stop()) offset_time+=si::time((interval-1).min_stop_time().count());
   }
-  increase_time::trim_drive(drive);
+  drive.trim();
   return {result,drive};
 }
 

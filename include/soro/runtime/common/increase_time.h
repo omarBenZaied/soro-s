@@ -18,19 +18,20 @@ struct train_drive {
   void push_back(vector<runtime::train_state>const& phase,phase_type const& type);
   void insert(int const& offset,phases const& new_phases,vector<phase_type> const& types);
   void fix_times(int const& offset);
+  void fix_distance(int const& offset);
   void fix_phases(int const& offset);
   void fix_drive(int const& offset);
   void erase_elements(int const& offset,
                       int const& to_delete);
   train_drive& operator+=(train_drive const& other);
   void print();
+  void trim();
 
   phases phases_;
   types phase_types_;
   runtime::train_state start_state_;
 };
 
-void trim_drive(train_drive& drive);
 
 si::time get_cruise_time(si::speed const& speed, si::length const& start,
                          si::length const& stop);
@@ -69,5 +70,4 @@ bool check_H(train_drive& drive,rs::train_physics const& tp);
 
 bool check_D(train_drive& drive);
 
-bool slowest_drive(train_drive& drive,int const& cruise_index,rs::train_physics const& tp);
 }// namespace increase_time

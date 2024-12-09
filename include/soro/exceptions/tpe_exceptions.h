@@ -15,4 +15,8 @@ namespace soro::tpe_simulation{
     tpe_point const point_;
     vector<runtime::interval_point> intr_points_;
   };
+  struct tpe_malformed_exception : std::runtime_error {
+    explicit tpe_malformed_exception(const std::string& what_arg)
+      : std::runtime_error(what_arg) {}
+  };
 } // namspace soro::tpe_simulation

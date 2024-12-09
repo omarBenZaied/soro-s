@@ -64,15 +64,14 @@ TEST_SUITE("increase_time suite"){
       train_state current;
       current.speed_ = t.start_speed_;
       tt::train::trip const trip(tt::train::trip::id{0}, t.id_, ZERO<absolute_time>);
-      auto prev_time = si::time::zero();
       bool actually_tested = false;
       auto interval = intervals.begin();
       for(auto& tpe_point :tpe_points){
         tpe_point.e_time_ = tpe_point.e_time_*arrival_factor;
         tpe_point.l_time_ = std::max(tpe_point.l_time_,tpe_point.e_time_);
         train_drive drive;
-        std::tie(current,drive) = get_end_state(current,tpe_point,interval,nullptr,t,trip,prev_time);
-        if(drive.phase_types_.size()>=1) {
+        std::tie(current,drive) = get_end_state(current,tpe_point,interval,nullptr,t,trip);
+        if(!drive.phase_types_.empty()&&drive.phase_types_!=vector<phase_type>{braking}) {
           actually_tested = true;
           if(should_throw(drive,intervals.p_,t.physics_,tpe_point)) CHECK_THROWS(increase_time::increase_time(drive, tpe_point, t.physics_,
                                           intervals.p_, standard_next_offset));
@@ -98,7 +97,8 @@ TEST_SUITE("increase_time suite"){
   TEST_CASE("increase_time intersection"){
     infra::infrastructure const infra(INTER_OPTS);
     tt::timetable const tt(INTER_TT_OPTS, infra);
-    check_increase_time({tt->trains_[0]},infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),ARRIVAL_FACTOR);
+    vector<tt::train> trains{tt->trains_.begin(),tt->trains_.end()-1};
+    check_increase_time(trains,infra,infra::type_set({infra::type::HALT,infra::type::EOTD}),ARRIVAL_FACTOR);
   }
   TEST_CASE("increase_time follow"){
     infra::infrastructure const infra(SMALL_OPTS);

@@ -16,6 +16,7 @@
 
 #include <soro/infrastructure/parsers/iss/parse_track_element.h>
 #include <soro/runtime/physics/rk4/detail/get_speed_limit.h>
+#include <soro/utls/cumulative_timer.h>
 #include <test/file_paths.h>
 #include <test/tpe_runtime/tpe_arrival_factor.h>
 
@@ -24,13 +25,11 @@
 #include "soro/exceptions/tpe_exceptions.h"
 
 #include "test/tpe_runtime/tpe_simulation_utls.h"
-#include "test/tpe_runtime/tpe_arrival_factor.h"
-#include "soro/runtime/physics/rk4/detail/get_speed_limit.h"
+
 namespace soro::tpe_simulation{
 using namespace runtime;
 using namespace infra;
 using namespace test;
-//using tpe_changer = tpe_point(tpe_point const&);
 using tpe_changer = std::function<tpe_point(tpe_point const&)>;
 using tpe_maker = tpe_points(tt::train const&,infrastructure const&,infra::type_set const&);
 TEST_SUITE("tpe respecting travel suite") {
@@ -81,21 +80,27 @@ TEST_SUITE("tpe respecting travel suite") {
       CHECK_EQ(unique_time,result.end());
 
       CHECK_EQ(tpe_points.size(),result.size());
+      CHECK_GE(result.size(),2);
+
+      auto intervals = get_intervals(t,record_types,infra);
+      auto interval = intervals.begin();
+      auto halt_time = si::time::zero();
       for(int i =0;i<tpe_points.size();++i) {
         CHECK_EQ(tpe_points[i].distance_,result[i].dist_);
 
         CHECK_LE(result[i].speed_,tpe_points[i].v_max_);
-        if(result[i].speed_<tpe_points[i].v_min_) {
-          std::cout<<result[i].dist_<<std::endl;
-          std::cout<<tpe_points[i].distance_<<std::endl;
-          std::cout<<tpe_points[i].v_min_<<std::endl;
-          throw std::logic_error("It happened");
-        }
         CHECK_GE(result[i].speed_,tpe_points[i].v_min_);
 
         auto predecessor_time = i==0?si::time::zero():result[i-1].time_;
-        CHECK_LE(result[i].time_-predecessor_time,tpe_points[i].l_time_);
-        CHECK_GE(result[i].time_-predecessor_time,tpe_points[i].e_time_);
+        CHECK_LE(result[i].time_-predecessor_time-halt_time,tpe_points[i].l_time_);
+        CHECK_GE(result[i].time_-predecessor_time-halt_time,tpe_points[i].e_time_);
+        if(!tpe_points[i].distance_.is_zero()) {
+          while(interval.end_distance()<tpe_points[i].distance_) ++interval;
+          if(interval.end_distance()==tpe_points[i].distance_&&interval.ends_on_stop()) {
+            halt_time=si::time(interval.min_stop_time().count());
+          }
+          else halt_time = si::time::zero();
+        }
       }
 
       check_drive(drive,0);
@@ -104,6 +109,8 @@ TEST_SUITE("tpe respecting travel suite") {
       utls::for_each(drive.phases_,[](vector<train_state> const& phase){CHECK_EQ(phase.size(),2);});
     }
   }
+
+
   void check_slowest_drive(vector<tt::train> const& trains,infrastructure const& infra,type_set const& record_types) {
     for(auto const& t:trains) {
       auto points = get_tpe_points(t,infra,record_types);
@@ -157,7 +164,8 @@ TEST_SUITE("tpe respecting travel suite") {
   TEST_CASE("slowest drive intersection") {
     infrastructure const infra(INTER_OPTS);
     tt::timetable const tt(INTER_TT_OPTS, infra);
-    check_slowest_drive({tt->trains_[0]},infra,type_set({type::HALT,type::EOTD}));
+    vector<tt::train> trains{tt->trains_.begin(),tt->trains_.end()-1};
+    check_slowest_drive(trains,infra,type_set({type::HALT,type::EOTD}));
   }
 
   TEST_CASE("slowest drive follow") {
@@ -185,7 +193,7 @@ TEST_SUITE("tpe respecting travel suite") {
   TEST_CASE("tpe respecting travel intersection normal") {
     infrastructure const infra(test::INTER_OPTS);
     tt::timetable const tt(test::INTER_TT_OPTS, infra);
-    vector<tt::train> trains{tt->trains_[0]};
+    vector<tt::train> trains{tt->trains_.begin(),tt->trains_.end()-1};
     auto identity = [](tpe_point const& pt){return pt;};
     check_tpe_respecting_simulation(trains,infra,type_set({type::HALT,type::EOTD}),identity,get_tpe_points);
   }
@@ -231,7 +239,7 @@ TEST_SUITE("tpe respecting travel suite") {
   TEST_CASE("tpe respecting travel intersection decreased l_time") {
     infrastructure const infra(test::INTER_OPTS);
     tt::timetable const tt(test::INTER_TT_OPTS, infra);
-    vector<tt::train> trains{tt->trains_[0]};
+    vector<tt::train> trains{tt->trains_.begin(),tt->trains_.end()-1};
     auto l_time_reducer = [](tpe_point const& pt) {
       tpe_point point(pt);
       point.l_time_ = si::time::zero();
@@ -279,7 +287,7 @@ TEST_SUITE("tpe respecting travel suite") {
   TEST_CASE("tpe respecting travel intersection increased e_time") {
     infrastructure const infra(test::INTER_OPTS);
     tt::timetable const tt(test::INTER_TT_OPTS, infra);
-    vector<tt::train> trains{tt->trains_[0]};
+    vector<tt::train> trains{tt->trains_.begin(),tt->trains_.end()-1};
     auto e_time_increaser = [](tpe_point const& pt) {
       tpe_point point(pt);
       point.e_time_ = pt.e_time_*increase_time::ARRIVAL_FACTOR;
@@ -318,30 +326,32 @@ TEST_SUITE("tpe respecting travel suite") {
     vector<tt::train> trains{tt->trains_.begin(),tt->trains_.end()-1};
     for(auto const& t:trains) {
       auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
-      auto max_speed_reducer = [intervals](tpe_point const& pt) {
+      auto min_speed_increaser = [intervals](tpe_point const& pt) {
         auto point_interval = std::find_if(intervals.begin(),intervals.end(),[pt](interval const& interval) {return interval.end_distance()==pt.distance_;});
         if(point_interval.sequence_point().has_value()&&point_interval.sequence_point().value()->is_halt()) return pt;
         tpe_point point(pt);
         point.v_min_ = si::speed(5);
         return point;
       };
-      check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
+      check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),min_speed_increaser,get_tpe_points);
     }
   }
 
   TEST_CASE("tpe respecting travel intersection increased v_min") {
     infrastructure const infra(test::INTER_OPTS);
     tt::timetable const tt(test::INTER_TT_OPTS, infra);
-    auto t = tt->trains_.front();
-    auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
-    auto max_speed_reducer = [intervals](tpe_point const& pt) {
-      auto point_interval = std::find_if(intervals.begin(),intervals.end(),[pt](interval const& interval) {return interval.end_distance()==pt.distance_;});
-      if(point_interval.sequence_point().has_value()) return pt;
-      tpe_point point(pt);
-      point.v_min_ = si::speed(5);
-      return point;
-    };
-    check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
+    vector<tt::train> trains{tt->trains_.begin(),tt->trains_.end()-1};
+    for(auto const& t:trains) {
+      auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
+      auto min_speed_increaser = [intervals](tpe_point const& pt) {
+        auto point_interval = std::find_if(intervals.begin(),intervals.end(),[pt](interval const& interval) {return interval.end_distance()==pt.distance_;});
+        if(point_interval.sequence_point().has_value()) return pt;
+        tpe_point point(pt);
+        point.v_min_ = si::speed(5);
+        return point;
+      };
+      check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),min_speed_increaser,get_tpe_points);
+    }
   }
 
   TEST_CASE("tpe respecting travel follow increased v_min") {
@@ -349,7 +359,7 @@ TEST_SUITE("tpe respecting travel suite") {
     tt::timetable const tt(FOLLOW_OPTS, infra);
     for(auto const& t:tt->trains_) {
       auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
-      auto max_speed_reducer = [intervals](tpe_point const& pt) {
+      auto min_speed_increaser = [intervals](tpe_point const& pt) {
         auto point_interval = std::find_if(intervals.begin(),intervals.end(),[pt](interval const& interval) {return interval.end_distance()==pt.distance_;});
         if(pt.distance_.is_zero()||point_interval!=intervals.end()&&
           point_interval.sequence_point().has_value()&&point_interval.sequence_point().value()->is_halt()) return pt;
@@ -357,7 +367,7 @@ TEST_SUITE("tpe respecting travel suite") {
         point.v_min_ = si::speed(5);
         return point;
       };
-      check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
+      check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),min_speed_increaser,get_tpe_points);
     }
   }
 
@@ -368,7 +378,7 @@ TEST_SUITE("tpe respecting travel suite") {
         utls::try_deserializing<tt::timetable>("cross_opts.raw", CROSS_OPTS, infra);
     for(auto const& t:tt->trains_) {
       auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
-      auto max_speed_reducer = [intervals](tpe_point const& pt) {
+      auto min_speed_increaser = [intervals](tpe_point const& pt) {
         auto point_interval = std::find_if(intervals.begin(),intervals.end(),[pt](interval const& interval) {return interval.end_distance()==pt.distance_;});
         if(pt.distance_.is_zero()||point_interval!=intervals.end()&&
           point_interval.sequence_point().has_value()&&point_interval.sequence_point().value()->is_halt()) return pt;
@@ -376,7 +386,7 @@ TEST_SUITE("tpe respecting travel suite") {
         point.v_min_ = si::speed(5);
         return point;
       };
-      check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
+      check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),min_speed_increaser,get_tpe_points);
     }
   }
 
@@ -403,19 +413,21 @@ TEST_SUITE("tpe respecting travel suite") {
   TEST_CASE("tpe respecting travel intersection decreased v_max") {
     infrastructure const infra(test::INTER_OPTS);
     tt::timetable const tt(test::INTER_TT_OPTS, infra);
-    auto t = tt->trains_.front();
-    auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
-    auto max_speed_reducer = [intervals,t](tpe_point const& pt) {
-      auto interval_point = std::ranges::find_if(intervals.p_,[pt](struct interval_point const& point){return point.distance_>=pt.distance_;});
-      interval interval(&*(interval_point-1),&*interval_point);
-      auto deaccel = t.physics_.braking_deaccel(interval.infra_limit(),interval.bwp_limit(),interval.brake_path_length());
-      rk4::get_speed_limit get_speed_limit(interval.length(),t.physics_.max_speed(interval.speed_limit()),interval.target_speed(t.physics_),deaccel);
-      auto speed = get_speed_limit(pt.distance_-interval.start_distance());
-      tpe_point point(pt);
-      point.v_max_ = speed*0.9;
-      return point;
-    };
-    check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
+    vector<tt::train> trains{tt->trains_.begin(),tt->trains_.end()-1};
+    for(auto const& t: trains) {
+      auto intervals = get_intervals(t,type_set({type::HALT,type::EOTD}),infra);
+      auto max_speed_reducer = [intervals,t](tpe_point const& pt) {
+        auto interval_point = std::ranges::find_if(intervals.p_,[pt](struct interval_point const& point){return point.distance_>=pt.distance_;});
+        interval interval(&*(interval_point-1),&*interval_point);
+        auto deaccel = t.physics_.braking_deaccel(interval.infra_limit(),interval.bwp_limit(),interval.brake_path_length());
+        rk4::get_speed_limit get_speed_limit(interval.length(),t.physics_.max_speed(interval.speed_limit()),interval.target_speed(t.physics_),deaccel);
+        auto speed = get_speed_limit(pt.distance_-interval.start_distance());
+        tpe_point point(pt);
+        point.v_max_ = speed*0.9;
+        return point;
+      };
+      check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
+    }
   }
 
   TEST_CASE("tpe respecting travel follow decreased v_max") {
@@ -459,6 +471,5 @@ TEST_SUITE("tpe respecting travel suite") {
       check_tpe_respecting_simulation({t},infra,type_set({type::HALT,type::EOTD}),max_speed_reducer,get_tpe_points);
     }
   }
-
 }
 }// namespace soro::tpe_simulation

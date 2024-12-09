@@ -282,7 +282,6 @@ std::tuple<delta,increase_time::train_drive> shortest_travel_time::create_drive(
 
   if (should_accel) {
     commands.emplace_back(command::action::accelerate, accel);
-    if(cannot_cruise) std::cout<<"Cant cruise"<<std::endl;
     drive.push_back(accel_states,cannot_cruise?increase_time::braking:increase_time::acceleration);
   }
 

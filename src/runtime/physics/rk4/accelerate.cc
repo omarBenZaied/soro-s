@@ -128,7 +128,6 @@ soro::vector<train_state> accelerate_with_braking_curve(
   if (state.dist_ == braking_point &&
       state.speed_ < get_speed_limit(braking_point)) {
     auto new_accel_states = accelerate4(state, stop_at, get_speed_limit, slope, deaccel, tp);
-    std::cout << accel_states.size() << std::endl;
     accel_states.insert(accel_states.end(),new_accel_states.begin()+(accel_states.empty()?0:1),new_accel_states.end());
   }
   utls::sassert(accel_states.front().dist_.is_zero(),"states doesnt start with distance of zero");
@@ -201,7 +200,6 @@ train_state accelerate_backwards(train_state initial_state,interval const& inter
   auto max_speed = interval.speed_limit(tp);
   train_state last;
   while(initial_state.dist_>min_dist&&initial_state.speed_<max_speed&&initial_state.speed_.is_positive()){
-    //TODO:: das hier ist generaliserbar
     last = initial_state;
     initial_state-=rk4_step(initial_state.speed_, delta_t, slope, tp);
   }
